@@ -27,8 +27,8 @@ sys.path.extend(directories)
 from rec_lst_infusion import rec_lst
 from imaging_pipeline_functions import calculate_dFF_percentile
 
-from common_functions import normalise, get_GPU_availability
-_, GPU_AVAILABLE = get_GPU_availability()
+from common_functions import get_GPU_availability
+_, GPU_AVAILABLE, _ = get_GPU_availability()
 
 
 #%% paths and parameters
@@ -39,8 +39,7 @@ raw_sig_stem  = raw_data_stem / 'raw_signals'
 # info_path = raw_data_stem / 'infusion_session_info.parquet'
 # info = pd.read_parquet(info_path)
 info = rec_lst
-info = info.iloc[::-1]
-info = info[63:]
+info = info[30:]
 
 # correction index
 corr_index = 0.7  # ROI - corr_index * neuropil
@@ -48,7 +47,6 @@ corr_index = 0.7  # ROI - corr_index * neuropil
 
 #%% main loop
 for recdate, rec in info.iterrows():
-    
     # load keys first  
     animal   = rec['anm']
     sessions = rec['session']
@@ -86,12 +84,13 @@ for recdate, rec in info.iterrows():
         Fneu_all       = sig_master_neu.values.squeeze()
         
         # correction
+        nframes = ops['nframes']
         if sess_idx == 0:
             F_start = 0
-            F_end   = ops['nframes']
+            F_end   = nframes
         else:
             F_start = F_end
-            F_end   = F_start + ops['nframes']
+            F_end   = F_start + nframes
         
         F_corr = F_all - corr_index * Fneu_all
         F_corr = F_corr[:, F_start:F_end]
@@ -100,12 +99,21 @@ for recdate, rec in info.iterrows():
         dFF, baselines = calculate_dFF_percentile(
             F_corr,
             t_axis=1,
+            window_size=9000,
             pct=20,
             GPU_AVAILABLE=GPU_AVAILABLE,
             CHUNK=True, 
-            chunk_size=2000, 
+            chunk_size=5000, 
             return_baseline=True
             )
+        
+        # check number of frames matching 
+        frametimes = beh['frame_times']
+        print(f'length of frame_times = {len(frametimes)}')
+        print(f'ops-nframes           = {nframes}')
+        print(f'length of dFF         = {dFF.shape[1]}')
+        if dFF.shape[1] != ops['nframes']:
+            raise ValueError('Issues with dFF calculation')
         
         # save dFF and baselines to disk
         save_path_dFF       = raw_sig_stem / recdate / f'{recname}_dFF.npy'

@@ -4,6 +4,7 @@ Created on Tue Jan 20 11:31:53 2026
 
 @author: Jingyu Cao
 """
+from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter as sci_gaussian_filter
 import cupy as cp
@@ -498,7 +499,7 @@ def nanpercentile_dff(
     return dff.get()
 
 
-def align_trials(data, alignment, beh, bef, aft, gpu=0, fs=30):
+def align_trials(data, alignment, beh, bef=2, aft=4, gpu=0, fs=30):
     if gpu:
        data = cp.array(data) 
     if data.ndim == 1:
@@ -665,7 +666,7 @@ def load_bin_file(data_path, file_name, n_frames=2000, height=512, width=512):
     """
     
     # Build the full path to the binary data file.
-    data_bin = data_path + file_name
+    data_bin = Path(data_path)/file_name
     
     # Use a memory map to load the binary data.
     reg_data = np.memmap(data_bin, mode='r', dtype='int16', shape=(n_frames, height, width))

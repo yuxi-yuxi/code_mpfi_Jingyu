@@ -91,28 +91,285 @@ def align_trials(data, event_frames,
             aligned_signal[:,t,:]=curr_trace
     
     return aligned_signal
-    
-def calculate_pooled_std_cp(pre_segements, post_segements):
-    pre_data = cp.array(pre_segements)
-    post_data = cp.array(post_segements)
-    n_pre  = pre_data.shape[-1]
-    n_post = post_data.shape[-1]
-    if pre_data.ndim == 2: # single roi (n_trials, pre/post frames)
-        pre_flat = pre_data.flatten()
-        post_flat = post_data.flatten()
-        # pooled_std = np.sqrt(((n_pre - 1) * np.std(pre_data, ddof=1)**2 + (n_post - 1) * np.std(post_data, ddof=1)**2) / (n_pre + n_post - 2))
-    elif pre_data.ndim == 3: # (n_rois, n_trials, pre/post frames)
-        # Flatten trials × frames into one axis
-        pre_flat  = pre_data.reshape(pre_data.shape[0], -1)   # (n_rois, n_pre_total)
-        post_flat = post_data.reshape(post_data.shape[0], -1) # (n_rois, n_post_total)
-        # Std per ROI (sample std, ddof=1)
-        std_pre  = cp.nanstd(pre_flat,  axis=-1, ddof=1)  # (n_rois,)
-        std_post = cp.nanstd(post_flat, axis=-1, ddof=1)  # (n_rois,)
+
+# def calculate_zscore_f_trace(corrected_traces, event_frames,
+#                             baseline_window=(-1, 0), response_window=(0.5, 1.5),
+#                             pre_event_window=2, post_event_window=4,
+#                             imaging_rate=30.0):
+
+#     orig_shape = corrected_traces.shape
+#     orig_ndim  = corrected_traces.ndim
+
+#     # ---------- normalize to ROI-format for computation ----------
+#     if orig_ndim == 2:
+#         # [n_rois, n_frames]
+#         n_rois, n_frames = corrected_traces.shape
+#         corrected_2d = corrected_traces
+#         is_roi_format = True
+#     elif orig_ndim == 3:
+#         # [gy, gx, n_frames] -> flatten to [n_rois, n_frames]
+#         gy, gx, n_frames = corrected_traces.shape
+#         corrected_2d = corrected_traces.reshape(gy * gx, n_frames)
+#         is_roi_format = False
+#     else:
+#         raise ValueError(f"Unsupported corrected_traces shape: {orig_shape}")
+
+#     n_trials = len(event_frames)
+#     if n_trials < 2:
+#         return None
+
+#     # ---------- build baseline segments ----------
+#     baseline_frames = (int(baseline_window[0] * imaging_rate),
+#                        int(baseline_window[1] * imaging_rate))
+
+#     trial_aligned_traces = align_trials(
+#         corrected_2d,
+#         event_frames=event_frames,
+#         bef=pre_event_window,
+#         aft=post_event_window,
+#         gpu=1
+#     )  # expected: cupy array [n_rois, n_trials, trial_len]
+
+#     keep_trial_idx = cp.any(cp.isnan(trial_aligned_traces), axis=-1)  # [n_rois, n_trials]
+#     trial_aligned_traces[keep_trial_idx] = cp.nan
+
+#     pre_event_frames = int(pre_event_window * imaging_rate)
+#     baseline_start = pre_event_frames + baseline_frames[0]
+#     baseline_end   = pre_event_frames + baseline_frames[1]
+
+#     # keep on GPU until the end (recommended)
+#     baseline_segment_all = trial_aligned_traces[:, :, baseline_start:baseline_end]  # cp, [n_rois, n_trials, len_baseline]
+
+#     # pooled_std_all should end up shape [n_rois,]
+#     pooled_std_all = calculate_pooled_std_cp(baseline_segment_all, None)  # <-- depends on your function signature
+#     baseline_all_mean = cp.nanmean(baseline_segment_all, axis=(1, 2))     # cp, [n_rois,]
+
+#     # ---------- z-score in 2D ----------
+#     denom = pooled_std_all[:, None]                      # [n_rois, 1]
+#     corrected_2d = cp.array(corrected_2d)
+#     z_2d = (corrected_2d - baseline_all_mean[:, None]) / denom
+#     z_2d = cp.where(denom == 0, cp.nan, z_2d)            # avoid div-by-zero
+
+#     # ---------- reshape back to match input ----------
+#     if is_roi_format:
+#         zscored_traces = z_2d                             # (n_rois, n_frames)
+#     else:
+#         zscored_traces = z_2d.reshape(orig_shape)         # (gy, gx, n_frames)
         
-    # Vectorized pooled std
-    pooled_std = cp.sqrt(
-        ((n_pre - 1) * std_pre**2 + (n_post - 1) * std_post**2) / (n_pre + n_post - 2)
-    )  # shape (n_rois,) or a single value for single roi
+#     zscored_traces = zscored_traces.get()
+#     pooled_std_all = pooled_std_all.get()
+#     return zscored_traces, pooled_std_all
+
+import matplotlib.pyplot as plt
+
+
+def calculate_zscore_f_trace(corrected_traces, event_frames,
+                            baseline_window=(-1, 0), response_window=(0.5, 1.5),
+                            pre_event_window=2, post_event_window=4,
+                            imaging_rate=30.0,
+                            debug_plot=False,
+                            debug_roi_idx=0):
+    """
+    Z-score traces using pooled baseline from aligned trials for each ROI.
+
+    Parameters
+    ----------
+    corrected_traces : np.ndarray
+        Shape [n_rois, n_frames] or [gy, gx, n_frames]
+    event_frames : array-like
+        Event onset frames
+    baseline_window : tuple
+        Baseline window in seconds relative to event, e.g. (-1, 0)
+    response_window : tuple
+        Not used here yet, kept for compatibility
+    pre_event_window : float
+        Seconds before event included in aligned traces
+    post_event_window : float
+        Seconds after event included in aligned traces
+    imaging_rate : float
+        Frames/sec
+    debug_plot : bool
+        If True, make sanity-check plot(s)
+    debug_roi_idx : int
+        ROI index to plot if ROI-format input; for 3D input this is flattened ROI index
+
+    Returns
+    -------
+    zscored_traces : np.ndarray
+        Same shape as input
+    pooled_std_all : np.ndarray
+        Shape [n_rois,]
+    """
+
+    orig_shape = corrected_traces.shape
+    orig_ndim  = corrected_traces.ndim
+
+    # ---------- normalize to ROI-format for computation ----------
+    if orig_ndim == 2:
+        # [n_rois, n_frames]
+        n_rois, n_frames = corrected_traces.shape
+        corrected_2d = corrected_traces
+        is_roi_format = True
+    elif orig_ndim == 3:
+        # [gy, gx, n_frames] -> flatten to [n_rois, n_frames]
+        gy, gx, n_frames = corrected_traces.shape
+        corrected_2d = corrected_traces.reshape(gy * gx, n_frames)
+        is_roi_format = False
+    else:
+        raise ValueError(f"Unsupported corrected_traces shape: {orig_shape}")
+
+    n_trials = len(event_frames)
+    if n_trials < 2:
+        return None
+
+    # ---------- build baseline segments ----------
+    baseline_frames = (int(baseline_window[0] * imaging_rate),
+                       int(baseline_window[1] * imaging_rate))
+
+    trial_aligned_traces = align_trials(
+        corrected_2d,
+        event_frames=event_frames,
+        bef=pre_event_window,
+        aft=post_event_window,
+        gpu=1
+    )  # expected: cupy array [n_rois, n_trials, trial_len]
+
+    keep_trial_idx = cp.any(cp.isnan(trial_aligned_traces), axis=-1)  # [n_rois, n_trials]
+    trial_aligned_traces = cp.where(
+        keep_trial_idx[:, :, None],
+        cp.nan,
+        trial_aligned_traces
+    )
+
+    pre_event_frames = int(pre_event_window * imaging_rate)
+    baseline_start = pre_event_frames + baseline_frames[0]
+    baseline_end   = pre_event_frames + baseline_frames[1]
+
+    baseline_segment_all = trial_aligned_traces[:, :, baseline_start:baseline_end]  # [n_rois, n_trials, len_baseline]
+
+    pooled_std_all = calculate_pooled_std_cp(baseline_segment_all, None)   # [n_rois,]
+    baseline_all_mean = cp.nanmean(baseline_segment_all, axis=(1, 2))      # [n_rois,]
+
+    # ---------- z-score in 2D ----------
+    corrected_2d_cp = cp.asarray(corrected_2d)
+    denom = pooled_std_all[:, None]                                        # [n_rois, 1]
+
+    z_2d = (corrected_2d_cp - baseline_all_mean[:, None]) / denom
+    z_2d = cp.where((denom == 0) | cp.isnan(denom), cp.nan, z_2d)
+
+    # ---------- optional sanity check ----------
+    if debug_plot:
+        # Re-align z-scored traces using the same events/windows
+        z_aligned = align_trials(
+            z_2d,
+            event_frames=event_frames,
+            bef=pre_event_window,
+            aft=post_event_window,
+            gpu=1
+        )  # [n_rois, n_trials, trial_len]
+
+        z_aligned = cp.where(
+            keep_trial_idx[:, :, None],
+            cp.nan,
+            z_aligned
+        )
+
+        # 1) strongest mathematical sanity check:
+        #    exact pooled baseline samples used for normalization
+        baseline_z_direct = z_aligned[:, :, baseline_start:baseline_end]
+        baseline_mean_direct = cp.nanmean(baseline_z_direct, axis=(1, 2))   # [n_rois]
+
+        print("Direct pooled baseline mean after z-score:")
+        print(f"  max abs across ROIs = {cp.nanmax(cp.abs(baseline_mean_direct)).get():.6g}")
+        print(f"  mean abs across ROIs = {cp.nanmean(cp.abs(baseline_mean_direct)).get():.6g}")
+
+        # 2) plot one ROI mean ± SEM across trials
+        debug_roi_idx = int(np.clip(debug_roi_idx, 0, z_aligned.shape[0] - 1))
+        roi_trials = z_aligned[debug_roi_idx].get()  # [n_trials, trial_len]
+
+        t = np.arange(roi_trials.shape[1]) / imaging_rate - pre_event_window
+        mean_trace = np.nanmean(roi_trials, axis=0)
+        sem_trace = np.nanstd(roi_trials, axis=0) / np.sqrt(np.sum(~np.isnan(roi_trials), axis=0))
+
+        baseline_mask = (t >= baseline_window[0]) & (t < baseline_window[1])
+        roi_baseline_mean = np.nanmean(mean_trace[baseline_mask])
+
+        plt.figure(figsize=(6, 4))
+        plt.plot(t, mean_trace, linewidth=2, label=f'ROI {debug_roi_idx}')
+        plt.fill_between(t, mean_trace - sem_trace, mean_trace + sem_trace, alpha=0.3)
+        plt.axvline(0, linestyle='--')
+        plt.axhline(0, linestyle=':')
+        plt.axvspan(baseline_window[0], baseline_window[1], alpha=0.15, label='baseline')
+        plt.xlabel('Time from event (s)')
+        plt.ylabel('Z-score')
+        plt.title(f'Mean aligned z-trace | ROI {debug_roi_idx}\nBaseline mean = {roi_baseline_mean:.4f}')
+        plt.legend(frameon=False)
+        plt.tight_layout()
+        plt.show()
+
+        # 3) population-average plot across all ROIs
+        pop_mean_trace = cp.nanmean(z_aligned, axis=(0, 1)).get()  # pooled over ROI and trial
+        pop_baseline_mean = np.nanmean(pop_mean_trace[baseline_mask])
+
+        plt.figure(figsize=(6, 4))
+        plt.plot(t, pop_mean_trace, linewidth=2)
+        plt.axvline(0, linestyle='--')
+        plt.axhline(0, linestyle=':')
+        plt.axvspan(baseline_window[0], baseline_window[1], alpha=0.15)
+        plt.xlabel('Time from event (s)')
+        plt.ylabel('Z-score')
+        plt.title(f'Population mean aligned z-trace\nBaseline mean = {pop_baseline_mean:.4f}')
+        plt.tight_layout()
+        plt.show()
+
+    # ---------- reshape back to match input ----------
+    if is_roi_format:
+        zscored_traces = z_2d
+    else:
+        zscored_traces = z_2d.reshape(orig_shape)
+
+    zscored_traces = zscored_traces.get()
+    pooled_std_all = pooled_std_all.get()
+    return zscored_traces, pooled_std_all    
+        
+def calculate_pooled_std_cp(pre_segements, post_segements=None):
+    if post_segements is not None:
+        pre_data = cp.array(pre_segements)
+        post_data = cp.array(post_segements)
+        n_pre  = pre_data.shape[-1]
+        n_post = post_data.shape[-1]
+        if pre_data.ndim == 2: # single roi (n_trials, pre/post frames)
+            pre_flat = pre_data.flatten()
+            post_flat = post_data.flatten()
+            # pooled_std = np.sqrt(((n_pre - 1) * np.std(pre_data, ddof=1)**2 + (n_post - 1) * np.std(post_data, ddof=1)**2) / (n_pre + n_post - 2))
+        elif pre_data.ndim == 3: # (n_rois, n_trials, pre/post frames)
+            # Flatten trials × frames into one axis
+            pre_flat  = pre_data.reshape(pre_data.shape[0], -1)   # (n_rois, n_pre_total)
+            post_flat = post_data.reshape(post_data.shape[0], -1) # (n_rois, n_post_total)
+            # Std per ROI (sample std, ddof=1)
+            std_pre  = cp.nanstd(pre_flat,  axis=-1, ddof=1)  # (n_rois,)
+            std_post = cp.nanstd(post_flat, axis=-1, ddof=1)  # (n_rois,)
+            
+        # Vectorized pooled std
+        pooled_std = cp.sqrt(
+            ((n_pre - 1) * std_pre**2 + (n_post - 1) * std_post**2) / (n_pre + n_post - 2)
+        )  # shape (n_rois,) or a single value for single roi
+    else:
+        pre_data = cp.array(pre_segements)
+        n_pre  = pre_data.shape[-1]
+        
+        if pre_data.ndim == 2: # single roi (n_trials, pre/post frames)
+            pre_flat = pre_data.flatten()
+
+        elif pre_data.ndim == 3: # (n_rois, n_trials, pre/post frames)
+            # Flatten trials × frames into one axis
+            pre_flat  = pre_data.reshape(pre_data.shape[0], -1)   # (n_rois, n_pre_total)
+            # Std per ROI (sample std, ddof=1)
+            std_pre  = cp.nanstd(pre_flat,  axis=-1, ddof=1)  # (n_rois,)
+            
+            pooled_std = std_pre
+
+        
     return pooled_std
 
 
@@ -166,43 +423,8 @@ def quantify_event_response(corrected_traces, event_frames,
     response_segment_all = np.zeros((n_rois, n_trials, len_response))
     
     n_valid_event = 0
-    for trial_idx, event_frame in enumerate(event_frames):
-        if event_frame > len_baseline and event_frame < n_frames - len_response:
-            # all rois trials baseline window segements, [n_rois, n_baseline_frames]
-            baseline_segment = corrected_traces[:, event_frame + baseline_frames[0]:
-                                              event_frame + baseline_frames[1]]
-            baseline_segment_all[:, trial_idx, :] = baseline_segment
-            # all rois trials response window segements, [n_rois, n_response_frames]
-            response_segment = corrected_traces[:, event_frame + response_frames[0]:
-                                              event_frame + response_frames[1]]
-            response_segment_all[:, trial_idx, :] = response_segment 
-            n_valid_event += 1
-        else:
-            baseline_segment_all[:, trial_idx, :] = np.nan
-            response_segment_all[:, trial_idx, :] = np.nan
     
-     
-    # Exclude segments with extreme dF/F values (>10 or <-10)
-    # Set extreme values to NaN so they are excluded from nanmean/nanstd calculations
-    extreme_mask_baseline = np.any(np.isnan(baseline_segment_all), axis=-1) 
-    extreme_mask_response = np.any(np.isnan(response_segment_all), axis=-1) 
-    baseline_segment_all[extreme_mask_baseline] = np.nan
-    response_segment_all[extreme_mask_response] = np.nan
-
-    n_keep_baseline = np.sum(~extreme_mask_baseline, axis=-1)
-    n_keep_response = np.sum(~extreme_mask_response, axis=-1)
-    # if n_extreme_baseline > 0 or n_extreme_response > 0:
-    #     print(f"Excluded {n_extreme_baseline} baseline and {n_extreme_response} response values with |dF/F| = np.nan")
-
-    ## calculate std across all baseline ofr response segments for all rois
-    pooled_std_all = calculate_pooled_std_cp(baseline_segment_all, response_segment_all).get()
-    baseline_all_mean = np.nanmean(baseline_segment_all, axis=(1,2)) # [n_rois,]
-    response_all_mean = np.nanmean(response_segment_all,  axis=(1,2)) # [n_rois,]
-    response_amp_all = response_all_mean - baseline_all_mean # [n_rois,]
-    response_effect_size_all = response_amp_all/pooled_std_all
-    response_ratio_all = response_all_mean / baseline_all_mean
-    
-    # calculate roi trial mean profile aligned to event for quick plotting
+    # calculate roi trial mean profile aligned to event
     trial_aligned_traces = align_trials(corrected_traces,
                                         event_frames = event_frames,
                                         bef=shuffle_params['pre_event_window'],
@@ -210,12 +432,33 @@ def quantify_event_response(corrected_traces, event_frames,
                                         gpu=1) # [n_rois, n_trials, trial_len]
 
     # Apply same extreme value filtering to trial_aligned_traces for shuffle test
-    extreme_mask_aligned = cp.any(cp.isnan(trial_aligned_traces), axis=-1)
-    trial_aligned_traces[extreme_mask_aligned] = cp.nan
-    n_keep_trial = cp.sum(~extreme_mask_aligned, axis=-1).get()
-    
+    exclude_trial_idx = cp.any(cp.isnan(trial_aligned_traces), axis=-1) # [n_rois, n_trials]
+    trial_aligned_traces[exclude_trial_idx] = cp.nan
+    n_keep_trial = cp.sum(~exclude_trial_idx, axis=-1).get()
     event_aligned_mean = np.nanmean(trial_aligned_traces.get(), axis=1) # [n_rois, n_trials, trial_len]
     
+    # Extract baseline and response segments directly from trial_aligned_traces
+    # trial_aligned_traces is aligned with event at index = shuffle_pre_frames
+    shuffle_pre_frames = int(shuffle_params['pre_event_window'] * imaging_rate)
+    baseline_start = shuffle_pre_frames + baseline_frames[0]
+    baseline_end = shuffle_pre_frames + baseline_frames[1]
+    response_start = shuffle_pre_frames + response_frames[0]
+    response_end = shuffle_pre_frames + response_frames[1]
+
+    # Extract segments from trial_aligned_traces (already filtered by keep_trial_idx)
+    baseline_segment_all = trial_aligned_traces[:, :, baseline_start:baseline_end].get()  # [n_rois, n_trials, len_baseline]
+    response_segment_all = trial_aligned_traces[:, :, response_start:response_end].get()  # [n_rois, n_trials, len_response]
+
+    n_valid_event = int(cp.sum(~exclude_trial_idx[0]).get())  # count valid trials (same for all ROIs in terms of event validity)
+
+    ## calculate std across all baseline or response segments for all rois
+    pooled_std_all = calculate_pooled_std_cp(baseline_segment_all, response_segment_all).get()
+    baseline_all_mean = np.nanmean(baseline_segment_all, axis=(1,2)) # [n_rois,]
+    response_all_mean = np.nanmean(response_segment_all,  axis=(1,2)) # [n_rois,]
+    response_amp_all = response_all_mean - baseline_all_mean # [n_rois,]
+    response_effect_size_all = response_amp_all/pooled_std_all
+    response_ratio_all = response_all_mean / baseline_all_mean
+
     if  shuffle_test:
         n_shuffle = shuffle_params['times']
         shuffle_pre_sec = shuffle_params['pre_event_window']
@@ -317,10 +560,10 @@ def quantify_event_response(corrected_traces, event_frames,
                         'roi_id': r,
                         'dilation_k': dilation_k,
                         'n_valid_event': n_valid_event,
-                        'n_keep_baseline': n_keep_baseline[r],
-                        'n_keep_response': n_keep_response[r],
                         'n_keep_trial': n_keep_trial[r],
                         'response_amplitude': response_amp_all[r],
+                        'baseline_mean': baseline_all_mean[r],
+                        'response_mean': response_all_mean[r],
                         'effect_size': response_effect_size_all[r],
                         'response_ratio': response_ratio_all[r],
                         'shuff_response_amplitude': shuff_response_amp,
@@ -338,8 +581,6 @@ def quantify_event_response(corrected_traces, event_frames,
         response_amp_all = response_amp_all.reshape(n_grids_y, n_grids_x) # [n_rois,]
         response_effect_size_all = response_effect_size_all.reshape(n_grids_y, n_grids_x)
         response_ratio_all = response_ratio_all.reshape(n_grids_y, n_grids_x)
-        n_keep_baseline = n_keep_baseline.reshape(n_grids_y, n_grids_x)
-        n_keep_response = n_keep_response.reshape(n_grids_y, n_grids_x)
         n_keep_trial = n_keep_trial.reshape(n_grids_y, n_grids_x)
         
         if shuffle_test:
@@ -357,24 +598,24 @@ def quantify_event_response(corrected_traces, event_frames,
                     shuff_response_amp = []
                     shuff_effect_size  = []
                     shuffle_ratio = []
-                if not np.all(np.isnan(event_aligned_mean[y, x])):
-                    roi_dic = {
-                                'roi_id': roi_id,
-                                'dilation_k': dilation_k,
-                                'n_valid_event': n_valid_event,
-                                'n_trial_keep_baseline': n_keep_baseline[y, x],
-                                'n_trial_keep_response': n_keep_response[y, x],
-                                'n_keep_trial': n_keep_trial[y, x],
-                                'response_amplitude': response_amp_all[y, x],
-                                'effect_size': response_effect_size_all[y, x],
-                                'response_ratio': response_ratio_all[y, x],
-                                'shuff_response_amplitude': shuff_response_amp,
-                                'shuff_effect_size': shuff_effect_size,
-                                'shuff_response_ratio': shuffle_ratio,
-                                'mean_profile': event_aligned_mean[y, x]
-                                
-                            }
-                    roi_info.append(roi_dic)
+                # if not np.all(np.isnan(event_aligned_mean[y, x])): #only save valid rois
+                roi_dic = {
+                            'roi_id': roi_id,
+                            'dilation_k': dilation_k,
+                            'n_valid_event': n_valid_event,
+                            'n_keep_trial': n_keep_trial[y, x],
+                            'response_amplitude': response_amp_all[y, x],
+                            'baseline_mean': baseline_all_mean[y, x],
+                            'response_mean': response_all_mean[y, x],
+                            'effect_size': response_effect_size_all[y, x],
+                            'response_ratio': response_ratio_all[y, x],
+                            'shuff_response_amplitude': shuff_response_amp,
+                            'shuff_effect_size': shuff_effect_size,
+                            'shuff_response_ratio': shuffle_ratio,
+                            'mean_profile': event_aligned_mean[y, x]
+                            
+                        }
+                roi_info.append(roi_dic)
     
     return pd.DataFrame(roi_info)           
         

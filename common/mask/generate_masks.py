@@ -16,7 +16,7 @@ from scipy.ndimage import gaussian_filter1d
 
 from common.utils_basic import run_of_ones
 from common.mask.neuropil_mask import fiber_block_to_neuropil_masks
-from common.mask.utils_mask import load_axon_mask, generate_adaptive_membrane_mask, plot_membrane_mask, axon_mask_dilation, dlight_regressor_mask
+# from common.mask.utils_mask import load_axon_mask, generate_adaptive_membrane_mask, plot_membrane_mask, axon_mask_dilation, axon_mask_dilation_grid_free, dlight_regressor_mask_grid_free, dlight_regressor_mask
 import common.mask.utils_mask as utl
 
 
@@ -38,13 +38,18 @@ def generate_axon_dlight_masks_wrap(
                         mean_img_red, mean_img_green,
                         path_result=None,
                         dilation_steps = (0, 2, 4, 6, 8, 10),
+                        grid_size = 16,
                         dilation_method = 'binary',
+                        constrain_to_grid = True,
+                        visualize_neu = False,
+                        visualize_dilation = False,
+                        visualize_regressor = False
                         ):
     path_result = Path(path_result)
-    axon_mask = load_axon_mask(path_result)
+    axon_mask = utl.load_axon_mask(path_result)
     # create enchanced dlight mask and visualize
     print('creating enchanced dlight mask and visualize...')
-    base_mask, global_dlight_mask_enhanced, fig = generate_adaptive_membrane_mask(
+    base_mask, global_dlight_mask_enhanced, fig = utl.generate_adaptive_membrane_mask(
         mean_img_green,
         gaussian_sigma=1,
         adaptive_block_size=21,
@@ -57,7 +62,7 @@ def generate_axon_dlight_masks_wrap(
     np.save(path_result / 'global_dlight_mask_enhanced.npy', global_dlight_mask_enhanced)
     plt.savefig(path_result / 'global_dlight_mask_enhanced_generation.png', dpi=200)
     plt.close()
-    plot_membrane_mask(mean_img_green, 
+    utl.plot_membrane_mask(mean_img_green, 
                        base_mask, global_dlight_mask_enhanced,
                        path_result/'dlight_mask_enhanced.png')
     
@@ -68,27 +73,54 @@ def generate_axon_dlight_masks_wrap(
     
     # create dilated axon masks and neuropil masks
     print('creating dilated axon masks and neuropil masks...')
-    axon_mask_dilation(global_axon_mask, global_dlight_mask, mean_img_red,
-                           dilation_steps,
-                           method=dilation_method,
-                           output_dir=path_result,
-                           constrain_to_grid=True,
-                           grid_size=16)
+    if constrain_to_grid == True:
+        utl.axon_mask_dilation(global_axon_mask, global_dlight_mask, mean_img_red,
+                               dilation_steps,
+                               method=dilation_method,
+                               output_dir=path_result,
+                               constrain_to_grid=constrain_to_grid,
+                               grid_size=16,)
     
-    dlight_regressor_mask (path_result, 
-                        mean_img_red,
-                        dilation_steps,
-                        neu_pix=3,
-                        output_dir=path_result,
-                        constrain_to_grid=True,
-                        grid_size=16)
+        utl.dlight_regressor_mask (path_result, 
+                            mean_img_red,
+                            dilation_steps,
+                            neu_pix=3,
+                            output_dir=path_result,
+                            constrain_to_grid=constrain_to_grid,
+                            grid_size=16)
+    else:
+        utl.axon_mask_dilation_grid_free(global_axon_mask, global_dlight_mask, mean_img_red,
+                               dilation_steps,
+                               method=dilation_method,
+                               output_dir=path_result,
+                               grid_size=16,
+                               visualize=visualize_dilation,
+                               fig_out=path_result)
+        utl.dlight_regressor_mask_grid_free (path_result, 
+                            mean_img_red,
+                            dilation_steps,
+                            neu_pix=3,
+                            output_dir=path_result,
+                            grid_size=16,
+                            visualize=visualize_regressor,
+                            fig_out=path_result)
+    
     
     for k in dilation_steps:
         global_axon_mask  = np.load(path_result/'dilated_global_axon_k=0.npy')
+        # h, w = global_axon_mask.shape
+        # n_y = (h + grid_size - 1) // grid_size
+        # n_x = (w + grid_size - 1) // grid_size
+        # if k==0:
+        #     current_axon_mask = utl.split_map_to_grids_full(global_axon_mask, n_y, n_x)
+        # else:
         current_axon_mask = np.load(path_result/f'dilated_global_axon_k={k}.npy')
         fiber_block_to_neuropil_masks(current_axon_mask, global_axon_mask, 
-                                      grid_size=16,
+                                      grid_size=grid_size,
+                                      constrain_to_grid=constrain_to_grid,
                                       output_dir=path_result/f'fiber_neuropil_masks_dilation_k={k}.npy',
+                                      visualize=visualize_neu,
+                                      fig_out=path_result
                                       )
 
     
@@ -97,7 +129,7 @@ def generate_geco_dlight_masks_wrap(mean_img_red, mean_img_green,
                              ):
     # create enchanced dlight mask and visualize
     print('creating enchanced dlight mask and visualize...')
-    base_mask, global_dlight_mask_enhanced, fig = generate_adaptive_membrane_mask(
+    base_mask, global_dlight_mask_enhanced, fig = utl.generate_adaptive_membrane_mask(
         mean_img_green,
         gaussian_sigma=1,
         adaptive_block_size=21,
@@ -110,14 +142,14 @@ def generate_geco_dlight_masks_wrap(mean_img_red, mean_img_green,
     np.save(path_result / 'global_dlight_mask_enhanced.npy', global_dlight_mask_enhanced)
     plt.savefig(path_result / 'global_dlight_mask_enhanced_generation.png', dpi=200)
     plt.close()
-    plot_membrane_mask(mean_img_green, 
+    utl.plot_membrane_mask(mean_img_green, 
                        base_mask, global_dlight_mask_enhanced,
                        path_result / 'dlight_mask_enhanced.png')
 
 
     # create enchanced geco mask and visualize
     print('creating enchanced geco mask and visualize...')
-    base_mask, global_geco_mask_enhanced, fig = generate_adaptive_membrane_mask(
+    base_mask, global_geco_mask_enhanced, fig = utl.generate_adaptive_membrane_mask(
         mean_img_red,
         gaussian_sigma=1,
         adaptive_block_size=21,
@@ -130,12 +162,16 @@ def generate_geco_dlight_masks_wrap(mean_img_red, mean_img_green,
     np.save(path_result / 'global_geco_mask_enhanced.npy', global_geco_mask_enhanced)
     plt.savefig(path_result / 'global_geco_mask_enhanced_generation.png', dpi=200)
     plt.close()
-    plot_membrane_mask(mean_img_red, 
+    utl.plot_membrane_mask(mean_img_red, 
                        base_mask, global_geco_mask_enhanced,
                        path_result / 'geco_mask_enhanced.png')
     
 
-def extract_axon_dlight_masks(rec, p_masks, dilation_steps):
+def extract_axon_dlight_masks(rec, p_mask_result, dilation_steps,
+                              constrain_to_grid=True,
+                              visualize_neu = False,
+                              visualize_dilation = False,
+                              visualize_regressor = False):
     p_rec = r"Z:\Jingyu\2P_Recording\{}\{}\{}\{}".format(rec[:5], 
                                                         rec[:-3], 
                                                         rec[-2:],
@@ -148,7 +184,11 @@ def extract_axon_dlight_masks(rec, p_masks, dilation_steps):
     generate_axon_dlight_masks_wrap(mean_img_red, mean_img_green,
                                     p_mask_result,
                                     dilation_steps = dilation_steps,
-                                    dilation_method = 'binary')
+                                    dilation_method = 'binary',
+                                    constrain_to_grid = constrain_to_grid,
+                                    visualize_neu = visualize_neu,
+                                    visualize_dilation = visualize_dilation,
+                                    visualize_regressor = visualize_regressor)
  
 def select_geco_rois(mean_img, F_corr, stat_array, path_result='',
                       thresholds=classification_thresholds):
@@ -262,7 +302,7 @@ def select_gcamp_rois(mean_img, F_corr, stat_array, path_result='',
     mean_img_clip = np.clip(mean_img,
                             a_min = np.percentile(mean_img, 5),
                             a_max = np.percentile(mean_img, 98))
-    base_mask, global_soma_mask = generate_adaptive_membrane_mask(mean_img_clip,
+    base_mask, global_soma_mask = utl.generate_adaptive_membrane_mask(mean_img_clip,
                                   uniformity_threshold=0.27,
                                   min_region_size=100,
                                   hole_size_threshold=100,
@@ -313,35 +353,43 @@ if __name__ == "__main__":
     import shutil
     from tqdm import tqdm
     from common.plotting_functions_Jingyu import plot_random_dff_traces
-    # exp = 'Dbh_dlight'
-    exp = 'geco_dlight'
+    exp = 'Dbh_dlight'
+    # exp = 'geco_dlight'
     
     if exp == 'Dbh_dlight':
-        exp = 'dlight_Ai14_Dbh'
-        f_out_df_selected = r"Z:\Jingyu\Code\dlight_imgaing\{}\df_behaviour_info_selected_new.pkl".format(exp)
-        df_selected = pd.read_pickle(f_out_df_selected)
-        rec_lst = df_selected.index.tolist()
-        ex_lst = [
-        'AC963-20250218-04',
-        'AC964-20250203-04',
-        'AC964-20250205-04',
-        'AC964-20250218-02',
-        'AC966-20250217-04',
-        'AC966-20250219-02',
-        ]
-    
-        rec_lst_tmp = [i for i in rec_lst if i not in ex_lst]
-        dilation_steps = (0, 2, 4, 6, 8, 10)
+        
+        from dlight_imaging.Dbh_dlight.recording_list import rec_lst_dlight_dbh as rec_lst
+        # exp = 'dlight_Ai14_Dbh'
+        # f_out_df_selected = r"Z:\Jingyu\Code\dlight_imgaing\{}\df_behaviour_info_selected_new.pkl".format(exp)
+        # df_selected = pd.read_pickle(f_out_df_selected)
+        # rec_lst = df_selected.index.tolist()
+        # ex_lst = [
+        # 'AC963-20250218-04',
+        # 'AC964-20250203-04',
+        # 'AC964-20250205-04',
+        # 'AC964-20250218-02',
+        # 'AC966-20250217-04',
+        # 'AC966-20250219-02',
+        # ]
+        
+        # rec_lst_tmp = [i for i in rec_lst if i not in ex_lst]
+        rec_lst_tmp = rec_lst[:1]
+        # dilation_steps = (0, 2, 4, 6, 8, 10)
+        DILATION_STEPS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
         # dilation_steps = (0, )
-        for rec in tqdm(rec_lst_tmp):
+        for rec in tqdm(rec_lst):
             print(f'\nProcessing {rec}...')
-            p_mask_result = Path(rf"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight\regression_res\{rec}\masks")
+            p_mask_result = Path(rf"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight\regression_res_grid_free_dilation\{rec}\masks")
             # shutil.rmtree(p_mask_result)
             if not p_mask_result.exists():
                 p_mask_result.mkdir(parents=True)
-            shutil.copy(rf"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight\regression_res_defunc_v1\{rec}\masks\ch2_FOV.npy_ROI_dict_selected.npy", 
-                        rf"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight\regression_res\{rec}\masks")     
-            extract_axon_dlight_masks(rec, p_mask_result, dilation_steps)
+            shutil.copy(rf"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight\regression_res\{rec}\masks\ch2_FOV.npy_ROI_dict_selected.npy", 
+                        rf"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight\regression_res_grid_free_dilation\{rec}\masks")     
+            extract_axon_dlight_masks(rec, p_mask_result, DILATION_STEPS,
+                                      constrain_to_grid=False,
+                                      visualize_neu = True,
+                                      visualize_dilation = True,
+                                      visualize_regressor = True)
             ## plot neuropil example
             # fiber_neuropil = np.load(p_mask_result/'fiber_neuropil_masks_dilation_k=0.npy')
             # fiber_mask = np.load(p_mask_result/'dilated_global_axon_k=0.npy')

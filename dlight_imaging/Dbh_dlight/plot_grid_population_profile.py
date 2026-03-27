@@ -15,71 +15,33 @@ from common import plotting_functions_Jingyu as pf
 save_fig = pf.save_fig
 pf.mpl_formatting()
 from common.utils_basic import normalize
-# Load recording list
-from dlight_imaging.Dbh_dlight.recording_list import rec_lst_dlight_dbh as rec_lst
 #%% PATHS AND PARAMS
 OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight")
-OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res'
-OUT_DIR_FIG = Path(r"Z:\Jingyu\LC_HPC_manuscript\fig_Dbh_dlight")
+# OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res'
+OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res_grid_free_dilation'
+OUT_DIR_DF = OUT_DIR_RAW_DATA/'processed_dataframe_grid_free_dilation'
 
-baseline_window=(-1, 0)
-response_window=(0, 1.5)
+OUT_DIR_FIG = Path(r"Z:\Jingyu\LC_HPC_manuscript\fig_dbh_dlight")
+# OUT_DIR_FIG = Path(r"Z:\Jingyu\2026_sunposium\fig_dbh_dlight")
+dlight_pre  = (-1, 0)
+dlight_post = (0, 1)
 effect_size_thresh = 0.05
 amp_shuff_thresh_up = 95
 amp_shuff_thresh_down = 5
+
+thresh_baseline_dlight = 2
+thresh_baseline_red    = 1
+
 regression_name ='single_trial_regression'
-save_plot = False
+save_plot = 1
 #%% MAIN
 # rec_lst = ['AC964-20250131-02', ] # for testing
-df_pool_sorted = pd.DataFrame()
-for rec in rec_lst:
-    print(f'loading: {rec}--------------------------------------------------')
-    anm, date, ss = rec.split('-')
-    p_data = r"Z:\Jingyu\2P_Recording\{}\{}\{}\RegOnly".format(anm, f'{anm}-{date}', ss)
-    p_regression = (OUR_DIR_REGRESS / rec / regression_name 
-                    / r'dilation_k=0')
-    p_stats = p_regression / f'{rec}_profile_stat.parquet'
-    p_stats_red = p_regression / f'{rec}_profile_stat_red.parquet'
-    roi_stats = pd.read_parquet(p_stats)
-    mean_profile_red = pd.read_parquet(p_stats_red)['mean_profile']
-    roi_stats['mean_profile_red'] = mean_profile_red
-    roi_stats['rec_id'] = rec
-    df_pool_sorted = pd.concat((df_pool_sorted, roi_stats))
 
-#%% thresholding
-# df_pool_sorted['dlight_valid'] = df_pool_sorted['mean_profile'].apply(lambda x: np.all(np.abs(x)<10, axis=-1))
-# df_pool_sorted['red_valid'] = df_pool_sorted['mean_profile_red'].apply(lambda x: np.all(np.abs(x)<10, axis=-1))
-df_pool_sorted['dlight_valid'] = df_pool_sorted['mean_profile'].apply(lambda x: np.nanmax(np.abs(x))<2)
-df_pool_sorted['red_valid'] = df_pool_sorted['mean_profile_red'].apply(lambda x: np.nanmax(np.abs(x))<1)
-df_pool_sorted = df_pool_sorted.loc[(df_pool_sorted['dlight_valid'])&(df_pool_sorted['red_valid'])]
-#%%
-edges = [0, 31]
-df_pool_sorted['edge'] = df_pool_sorted['roi_id'].apply(lambda rc: any(v in edges for v in rc))
-df_pool_sorted['shuffle_amps_thresh_up'] = df_pool_sorted['shuff_response_amplitude'].apply(lambda x: np.nanpercentile(x, amp_shuff_thresh_up))
-df_pool_sorted['shuffle_amps_thresh_down'] = df_pool_sorted['shuff_response_amplitude'].apply(lambda x: np.nanpercentile(x, amp_shuff_thresh_down))
-#%% reassign Up and Down using chosen thresholding
-df_pool_sorted['Up'] = np.where(
-                            #(geco_stats['max_sustained_sec']>0.09)
-                            ~(df_pool_sorted['edge'])&
-                            (df_pool_sorted['response_amplitude']>df_pool_sorted['shuffle_amps_thresh_up'])&
-                            (df_pool_sorted['effect_size']>0.05),
-                            True, False)
+# load pooled dataframe
+p_pooled_df = OUT_DIR_DF / rf"df_population_profile_pooled_dilation=0_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}.parquet"
+df_pool_all = pd.read_parquet(p_pooled_df)
 
-df_pool_sorted['Down'] = np.where(
-                            #(geco_stats['max_sustained_sec']>0.09)
-                            ~(df_pool_sorted['edge'])&
-                            (df_pool_sorted['response_amplitude']<df_pool_sorted['shuffle_amps_thresh_down'])&
-                            (df_pool_sorted['effect_size']< -0.05),
-                            True, False)
-
-df_pool_sorted.loc[df_pool_sorted['Up'], 'roi_type'] = 'Up'
-df_pool_sorted.loc[df_pool_sorted['Down'], 'roi_type'] = 'Down'
-df_pool_sorted.loc[(df_pool_sorted['Up']==0)&
-                   (df_pool_sorted['Down']==0)
-                   , 'roi_type'] = 'Stable'
-
-# p_pooled_df = OUT_DIR_RAW_DATA / rf"df_population_pooled_pre{baseline_window}_post{response_window}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}.pkl"
-# df_pool_sorted.to_pickle(p_pooled_df)
+df_pool_sorted = df_pool_all.loc[(df_pool_all['dlight_valid'])&(df_pool_all['red_valid'])&(~df_pool_all['edge'])]
 #%% plot heatmap
 
 # df_pool_sorted = df_pool_sorted.sort_values(by=['roi_type', 'response_amplitude'], ascending=[False, False])
@@ -92,35 +54,87 @@ traces = normalize(traces)
 fig, ax = plt.subplots(figsize=(3,3), dpi=300)
 ax.imshow(traces,
           aspect='auto', interpolation='none',
-          extent=[-2, 4, traces.shape[0], 0],
+          extent=[-2, 4, 0, traces.shape[0]],
           # cmap='YlGnBu_r',
           cmap='Greys')
 ax.set(xlim=(-1, 4))
 roi_types = df_pool_sorted['roi_type'].values
 change_idx = np.where(roi_types[:-1] != roi_types[1:])[0] + 1  # row indices where type changes
+# for idx in change_idx:
+#     ax.axhline(idx, color='red', lw=0.8, ls='--')
+    
+n = traces.shape[0]
+change_idx_plot = n - change_idx
+for y in change_idx_plot:
+    ax.axhline(y, color='red', lw=0.8, ls='--')
 
-for idx in change_idx:
-    ax.axhline(idx, color='red', lw=0.8, ls='--')  # adjust style as you like
 
-save_fig(fig, OUT_DIR_FIG, r'dlight_pupulation_heatmap_greys_ES={}_amp={}.pdf'
-            .format(effect_size_thresh, amp_shuff_thresh_up), save=save_plot)
+save_fig(fig, OUT_DIR_FIG, r'dlight_pupulation_heatmap_greys_pre={}_post={}_ES={}_amp={}.pdf'
+            .format(dlight_pre, dlight_post, effect_size_thresh, amp_shuff_thresh_up), save=save_plot)
 
 #%% plot population mean trace
 dlightUp_traces_dlight = 100*np.stack(df_pool_sorted.loc[df_pool_sorted['Up'], 'mean_profile'])
-dlightUp_traces_red = 100*np.stack(df_pool_sorted.loc[df_pool_sorted['Up'], 'mean_profile_red'])
-
+# dlightUp_traces_red = 100*np.stack(df_pool_sorted.loc[df_pool_sorted['Up'], 'mean_profile_red'])
+dlightUp_traces_red = None
+non_dlightUp_traces = 100*np.stack(df_pool_sorted.loc[~df_pool_sorted['Up'], 'mean_profile'])
 
 bef, aft = 2, 4
 xaxis = np.arange(30*(bef+aft))/30-bef    
 fig, ax = plt.subplots(dpi=300, figsize=(2,2))
-pf.plot_two_traces_with_scalebars(dlightUp_traces_dlight, dlightUp_traces_red, xaxis, ax,
-                                  colors = ("tab:green", "tab:red"),
+pf.plot_two_traces_with_scalebars(dlightUp_traces_dlight, non_dlightUp_traces, xaxis, ax,
+                                  colors = ("tab:green", "grey"),
                                   timebar=0.5, dffbar=1, 
                                   show_xaxis=1, xlabel='time from run (s)')
+ax.set(xlim=(-1, 4))
 
-save_fig(fig, OUT_DIR_FIG, r'pupulation_mean_trace_ES={}_amp={}.pdf'
-            .format(effect_size_thresh, amp_shuff_thresh_up), save=save_plot)
+save_fig(fig, OUT_DIR_FIG, r'pupulation_mean_trace_pre={}_post={}_ES={}_amp={}.pdf'
+            .format(dlight_pre, dlight_post, effect_size_thresh, amp_shuff_thresh_up), save=save_plot)
 
+
+#%% plot by session / anm
+# bef, aft = 2, 4
+# xaxis = np.arange(30*(bef+aft))/30-bef   
+# save_plot=0 
+# for rec_id, df_session in df_pool_sorted.groupby('anm'):
+    
+#     # heatmap
+#     df_session = df_session.sort_values(by=['roi_type', 'effect_size'], ascending=[False, False])
+#     traces = np.stack(df_session['mean_profile'])
+#     traces = gaussian_filter1d(traces, sigma=1)
+#     traces = normalize(traces)
+#     fig, ax = plt.subplots(figsize=(3,3), dpi=300)
+#     ax.imshow(traces,
+#               aspect='auto', interpolation='none',
+#               extent=[-2, 4, 0, traces.shape[0]],
+#               # cmap='YlGnBu_r',
+#               cmap='Greys')
+#     ax.set(xlim=(-1, 4))
+#     roi_types = df_session['roi_type'].values
+#     change_idx = np.where(roi_types[:-1] != roi_types[1:])[0] + 1  # row indices where type changes
+#     # for idx in change_idx:
+#     #     ax.axhline(idx, color='red', lw=0.8, ls='--')
+#     n = traces.shape[0]
+#     change_idx_plot = n - change_idx
+#     for y in change_idx_plot:
+#         ax.axhline(y, color='red', lw=0.8, ls='--')
+#     ax.set(title=rec_id)
+#     save_fig(fig, OUT_DIR_FIG, r'dlight_pupulation_heatmap_greys_pre={}_post={}_ES={}_amp={}.pdf'
+#                 .format(dlight_pre, dlight_post, effect_size_thresh, amp_shuff_thresh_up), save=save_plot)
+    
+#     # mean trace
+#     dlightUp_traces_dlight = 100*np.stack(df_session.loc[df_session['Up'], 'mean_profile'])
+#     # dlightUp_traces_red = 100*np.stack(df_session.loc[df_session['Up'], 'mean_profile_red'])
+#     dlightUp_traces_red = None
+#     fig, ax = plt.subplots(dpi=300, figsize=(2,2))
+#     pf.plot_two_traces_with_scalebars(dlightUp_traces_dlight, dlightUp_traces_red, xaxis, ax,
+#                                       colors = ("tab:green", "tab:red"),
+#                                       timebar=0.5, dffbar=1, 
+#                                       show_xaxis=1, xlabel='time from run (s)')
+#     ax.set(title=rec_id)
+#     save_fig(fig, OUT_DIR_FIG, r'pupulation_mean_trace_pre={}_post={}_ES={}_amp={}.pdf'
+#                 .format(dlight_pre, dlight_post, effect_size_thresh, amp_shuff_thresh_up), save=save_plot)
+    
+    
 
 
        

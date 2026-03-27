@@ -20,12 +20,13 @@ from dlight_imaging.Dbh_dlight.recording_list import rec_lst_dlight_dbh as rec_l
 import dlight_imaging.regression.utils_regression as utl
 #%%
 OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight")
-OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res'
+OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res_grid_free_dilation'
 OUT_DIR_FIG = ''
 
 
 # DILATION_STEPS = (0, 2, 4, 6, 8, 10)
-DILATION_STEPS = ( 1, 3, 5, 7, 9)
+# DILATION_STEPS = ( 1, 3, 5, 7, 9)
+DILATION_STEPS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 # DILATION_STEPS = (0, )
 
 correction_params = {
@@ -35,16 +36,11 @@ correction_params = {
     'n_jobs': -1
 }
 #%%
-# rec = 'AC967-20250225-04'
-# rec = 'AC969-20250319-04'
-# rec_lst = ['AC964-20250131-02', ] # for testing
-# rec_lst = ['AC969-20250319-04', ] # for testing
-# rec_lst = ['AC969-20250326-04', ] # for example ROI
 regression_name ='single_trial_regression'
 original_stdout = sys.stdout
 error_lst = []
      
-for rec in tqdm(rec_lst[41:]):
+for rec in tqdm(rec_lst[:21]):
     # try:
     start_time = time.time()
     print(f'\n{rec}_running regression pipeline...')
@@ -64,7 +60,11 @@ for rec in tqdm(rec_lst[41:]):
     # load suite2p ops
     suite2p_ops = np.load(p_rec+r'\ops.npy', allow_pickle=True).item()
     # load masks path or generate mask file    
-    p_masks = utl.load_masks_axon_dlight(rec, OUR_DIR_REGRESS, dilation_steps=DILATION_STEPS)
+    p_masks = utl.load_masks_axon_dlight(rec, OUR_DIR_REGRESS, dilation_steps=DILATION_STEPS,
+                                         constrain_to_grid = False,
+                                         visualize_neu = True,
+                                         visualize_dilation = True,
+                                         visualize_regressor = True)
     # load or generate behaviour file
     beh_data = utl.load_behaviour(rec, OUR_DIR_REGRESS, suite2p_ops['nframes'])
     
@@ -73,6 +73,12 @@ for rec in tqdm(rec_lst[41:]):
     global_axon_mask = np.load(p_masks / 'dilated_global_axon_k=0.npy')
     global_dlight_mask = np.load(p_masks / 'global_dlight_mask_enhanced.npy')
     
+    # load ch1 and ch2 movie
+    nframes = suite2p_ops['nframes']
+    # dlight
+    mov = utl.load_bin_file(p_rec, r'\data.bin', n_frames=nframes, height=512, width=512)
+    # red
+    movr = utl.load_bin_file(p_rec, r"\data_chan2.bin", n_frames=nframes, height=512, width=512)
     for k_size in DILATION_STEPS:
         print(f'Processing dilation step = {k_size}...')
         p_dilation_results = OUR_DIR_REGRESS / rec / regression_name / r'dilation_k={}'.format(k_size)
@@ -82,14 +88,14 @@ for rec in tqdm(rec_lst[41:]):
                 f'{rec}_raw_traces_k={k_size}.npz').exists():
             print('\nextracting raw traces...')
             
-            nframes = suite2p_ops['nframes']
+            # nframes = suite2p_ops['nframes']
             # nframes = 1000
             
-            # load ch1 and ch2 movie
-            # dlight
-            mov = utl.load_bin_file(p_rec, r'\data.bin', n_frames=nframes, height=512, width=512)
-            # red
-            movr = utl.load_bin_file(p_rec, r"\data_chan2.bin", n_frames=nframes, height=512, width=512)
+            # # load ch1 and ch2 movie
+            # # dlight
+            # mov = utl.load_bin_file(p_rec, r'\data.bin', n_frames=nframes, height=512, width=512)
+            # # red
+            # movr = utl.load_bin_file(p_rec, r"\data_chan2.bin", n_frames=nframes, height=512, width=512)
             
             global_mask_dilated_axon = np.load(p_masks / f'dilated_global_axon_k={k_size}.npy')
             # dilated_global_axon_and_dlight_mask = (global_axon_mask_dilated)&(global_dlight_mask)
@@ -99,11 +105,12 @@ for rec in tqdm(rec_lst[41:]):
             utl.traces_extraction_parallel(mov, movr, 
                                            global_mask_dilated_axon=global_mask_dilated_axon,
                                            global_mask_red=global_mask_dilated_axon,
-                                           global_mask_dlight=global_dlight_mask ,
+                                           global_mask_dlight = global_dlight_mask,
                                            dlight_regressor_mask=dlight_regressor_mask, 
                                            neuropil_mask=neuropil_mask,
+                                           grid_free = True,
                                            out_dir=out_path_regression/f'{rec}_raw_traces_k={k_size}.npz',)
-            del mov, movr  
+         
         print('loadind extraced traces...')
         raw_traces = np.load(out_path_regression/f'{rec}_raw_traces_k={k_size}.npz')
         original_dlight_traces  = raw_traces['original_dlight']
@@ -126,6 +133,7 @@ for rec in tqdm(rec_lst[41:]):
                                              event_frames=beh_data['run_onset_frames'],
                                              out_dir=p_dilation_results,
                                              **correction_params)
+    del mov, movr 
                 
        
     

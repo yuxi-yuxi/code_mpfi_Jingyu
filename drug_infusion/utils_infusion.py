@@ -267,14 +267,25 @@ def extract_session_info(rec, trial_type,
 
 def sort_response(df_profile, thresh_up, thresh_down,
                   ratio_type='',
-                  trace_type=''):
+                  # trace_type=''
+                  ):
     
     df_profile = df_profile.copy()
     # df_profile['gcamp_valid_ss1'] = df_profile[f'{trace_type}_ss1'].apply(lambda x: False if x is None else (np.all(np.abs(x) < 1, axis=-1)))
     # df_profile['gcamp_valid_ss2'] = df_profile[f'{trace_type}_ss2'].apply(lambda x: False if x is None else (np.all(np.abs(x) < 1, axis=-1)))
-    df_profile['gcamp_valid_ss1'] = df_profile[f'{trace_type}_ss1'].apply(lambda x: False if x is None else (not np.any(np.isnan(x))) and np.all(np.abs(x) < 1))
-    df_profile['gcamp_valid_ss2'] = df_profile[f'{trace_type}_ss2'].apply(lambda x: False if x is None else (not np.any(np.isnan(x))) and np.all(np.abs(x) < 1))
-    df_profile = df_profile.loc[(df_profile['gcamp_valid_ss1']) & (df_profile['gcamp_valid_ss2'])]
+    # df_profile['gcamp_valid_ss1'] = df_profile[f'{trace_type}_ss1'].apply(lambda x: False if x is None else (not np.any(np.isnan(x))) and np.all(np.abs(x) < 1))
+    # df_profile['gcamp_valid_ss2'] = df_profile[f'{trace_type}_ss2'].apply(lambda x: False if x is None else (not np.any(np.isnan(x))) and np.all(np.abs(x) < 1))
+    # df_profile['mean_dff_ss1'] =  df_profile[f'{trace_type}_ss1'].apply(lambda x: False if x is None else (np.nanmean(x)))
+    # df_profile['mean_dff_ss2'] =  df_profile[f'{trace_type}_ss2'].apply(lambda x: False if x is None else (np.nanmean(x)))
+    
+    # df_profile['gcamp_valid_ss1'] = df_profile['mean_dff_ss1'].apply(lambda x: 0<x<1)
+    # df_profile['gcamp_valid_ss2'] = df_profile['mean_dff_ss2'].apply(lambda x: 0<x<1)
+    # df_profile['gcamp_valid_ss1'] = df_profile['dff_baseline_min_ss1']>1
+    # df_profile['gcamp_valid_ss2'] = df_profile['dff_baseline_min_ss1']>1
+    
+    # df_profile = df_profile.loc[(df_profile['gcamp_valid_ss1']) & (df_profile['gcamp_valid_ss2'])
+    #                             # &(df_profile['gcamp_valid_f_all_median'])
+    #                             ]
     
     for i in ['ss1', 'ss2']:
         

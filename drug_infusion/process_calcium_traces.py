@@ -74,13 +74,10 @@ def roi_map_to_list(roi_map):
 
 #%%
 OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion")
-OUTPUT_RES = OUT_DIR_RAW_DATA / "processed_dataframe"
+OUTPUT_RES = OUT_DIR_RAW_DATA / "processed_dataframe_new_good"
 
-pre_window=(-1, -0.5)
+pre_window=(-1, 0)
 post_window=(0.5, 1.5)
-thresh_pyrUp = 1.3
-thresh_pyrDown = 1/thresh_pyrUp
-active_thresh = 0
 bef, aft = 2, 4
 plot_single_session = 0
 
@@ -127,8 +124,7 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
             np.save(data_path/r'gcamp_stats.npy', np.asarray(gcamp_stats, dtype='object'))
         else:
             gcamp_stats = np.load(data_path/r'gcamp_stats.npy', allow_pickle=True)
-    
-        
+            
         is_soma, is_active, is_active_soma = generate_masks.select_gcamp_rois(mean_img_ch1, F_corr,
                                          gcamp_stats, 
                                          path_result=r"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion\TEST_PLOTS")
@@ -150,11 +146,13 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
 
     run_ss1       = np.array(beh_ss1['run_onset_frames'])
     run_valid_ss1 = run_ss1[(seperate_valid_trial(beh_ss1))&(run_ss1!=-1)]
-    run_good_ss1  = run_ss1[(select_good_trials(beh_ss1))&(run_ss1!=-1)]
+    # run_good_ss1  = run_ss1[(select_good_trials(beh_ss1))&(run_ss1!=-1)]
+    run_good_ss1 = run_ss1[(rec['good_trials_ss1'])&(run_ss1!=-1)]
     run_good_ss1[:10] = 0 # exclude first 10 trials due to imaging intensity drifting
     run_ss2       = np.array(beh_ss2['run_onset_frames'])
     run_valid_ss2 = run_ss2[(seperate_valid_trial(beh_ss2))&(run_ss2!=-1)]
-    run_good_ss2  = run_ss2[(select_good_trials(beh_ss2))&(run_ss2!=-1)]
+    # run_good_ss2  = run_ss2[(select_good_trials(beh_ss2))&(run_ss2!=-1)]
+    run_good_ss2 = run_ss2[(rec['good_trials_ss2'])&(run_ss2!=-1)]
     run_good_ss2[:10] = 0 # exclude first 10 trials due to imaging intensity drifting
 
     has_good_ss1 = np.sum(run_good_ss1) > 0
@@ -163,17 +161,30 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
         print(f'  WARNING: {anm}-{date} ss1 has no good trials after exclusion')
     if not has_good_ss2:
         print(f'  WARNING: {anm}-{date} ss2 has no good trials after exclusion')
-
-    # only include active soma rois
+    
+    # # =============================================================================
+    # #  calculate stats for raw dFF traces   
+    # # =============================================================================
+    # # only include active soma rois
     dff_ss1 = np.load(data_path/f'{anm}-{date}-02_dFF.npy')[is_active_soma]   
     dff_ss2 = np.load(data_path/f'{anm}-{date}-04_dFF.npy')[is_active_soma]
+    dff_ss1_baseline = np.load(data_path/f'{anm}-{date}-02_baselines.npy')[is_active_soma] 
+    dff_ss2_baseline = np.load(data_path/f'{anm}-{date}-04_baselines.npy')[is_active_soma] 
+    f_all = np.load(data_path/'F_corr.npy')[is_active_soma]
+    f_all_median = np.nanmedian(f_all, axis=-1)
+    dff_ss1_baseline_min = np.nanmin(dff_ss1_baseline, axis=-1)
+    dff_ss2_baseline_min = np.nanmin(dff_ss2_baseline, axis=-1)
     
-    dff_ss1_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss1, n_sd=5)
-    dff_ss2_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss2, n_sd=5)
+    # dff_ss1_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss1, n_sd=5)
+    # dff_ss2_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss2, n_sd=5)
+    # thresh_dff_ss1 = np.nanmean(dff_ss1) + 5*np.nanstd(dff_ss1)
+    # thresh_dff_ss2 = np.nanmean(dff_ss2) + 5*np.nanstd(dff_ss2)
+    # dff_ss1_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss1, fix_thresh=thresh_dff_ss1)
+    # dff_ss2_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss2, fix_thresh=thresh_dff_ss2)
 
-    dff_ss1_sm = cp_gaussian_filter1d(cp.array(dff_ss1_safe), 
+    dff_ss1_sm = cp_gaussian_filter1d(cp.array(dff_ss1), 
                                                 sigma=1).get()
-    dff_ss2_sm = cp_gaussian_filter1d(cp.array(dff_ss2_safe), 
+    dff_ss2_sm = cp_gaussian_filter1d(cp.array(dff_ss2), 
                                                 sigma=1).get()
     
     shuffle_params={'times': 1000,
@@ -198,8 +209,8 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
         result = quantify_event_response(
                 corrected_traces=traces,
                 event_frames=events,
-                baseline_window=(-1, 0),
-                response_window=(0, 1.5),
+                baseline_window=pre_window,
+                response_window=post_window,
                 imaging_rate=30.0,
                 shuffle_test=False,
                 shuffle_params=shuffle_params
@@ -223,13 +234,40 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
     # Combine all with suffixes and add unit_id
     stats_combined = pd.concat(stats_parts, axis=1)
     stats_combined.insert(0, 'unit_id', np.where(is_active_soma)[0])
-    stats_combined.to_parquet(OUTPUT_RES/f'{anm}-{date}_raw_dff_profile.parquet')
+    # append baseline mean and F trace median for later filtering
+    stats_combined['dff_baseline_min_ss1']=dff_ss1_baseline_min
+    stats_combined['dff_baseline_min_ss2']=dff_ss2_baseline_min
+    stats_combined['f_all_median']=f_all_median
+    stats_combined.to_parquet(OUTPUT_RES/f'{anm}-{date}_raw_dff_profile_pre{pre_window}_post{post_window}.parquet')
     
-    dff_ss1_rsd = robust_filter_along_axis(dff_ss1, gpu=1).get() # smoothed already, sigma=1
-    dff_ss2_rsd = robust_filter_along_axis(dff_ss2, gpu=1).get() # smoothed already, sigma=1
+    # =============================================================================
+    #  calculate stats for zscored F traces   
+    # =============================================================================
+    # loading zscored traces
+        
+    zscore_ss1 = np.load(data_path/f'{anm}-{date}-02_zscored.npy')[is_active_soma]
+    zscore_ss2 = np.load(data_path/f'{anm}-{date}-04_zscored.npy')[is_active_soma]
     
-    dff_ss1_rsd_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss1_rsd, n_sd=5)
-    dff_ss2_rsd_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss2_rsd, n_sd=5)
+    # import matplotlib.pyplot as plt
+    # from common.utils_imaging import align_trials
+    # from common import plotting_functions_Jingyu as pf
+    # a = align_trials(zscore_ss1, 'run', beh_ss1)
+    # fig, ax = plt.subplots()
+    # pf.plot_mean_trace(np.nanmean(a, axis=1), ax)
+    
+    # thresh_ss1 = np.nanmean(zscore_ss1) + 5*np.nanstd(zscore_ss1)
+    # thresh_ss2 = np.nanmean(zscore_ss2) + 5*np.nanstd(zscore_ss2)
+    # zscore_ss1_safe = np.apply_along_axis(trace_filter, axis=-1, arr=zscore_ss1, fix_thresh=thresh_ss1)
+    # zscore_ss2_safe = np.apply_along_axis(trace_filter, axis=-1, arr=zscore_ss2, fix_thresh=thresh_ss2)
+    
+    # aa = align_trials(zscore_ss1_safe, 'run', beh_ss1)
+    # fig, ax = plt.subplots()
+    # pf.plot_mean_trace(np.nanmean(aa, axis=1), ax)
+    
+    zscore_ss1_sm = cp_gaussian_filter1d(cp.array(zscore_ss1), 
+                                                sigma=1).get()
+    zscore_ss2_sm = cp_gaussian_filter1d(cp.array(zscore_ss2), 
+                                                sigma=1).get()
     
     shuffle_params={'times': 1000,
                     'pre_event_window':  2, # seconds
@@ -237,47 +275,115 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
                     }
     
     # Define configurations for each stats calculation
-    configs_rsd = {
-        'valid_ss1': (dff_ss1_rsd_safe, run_valid_ss1),
-        'valid_ss2': (dff_ss2_rsd_safe, run_valid_ss2),
+    configs_zscore = {
+        'valid_ss1': (zscore_ss1_sm, run_valid_ss1),
+        'valid_ss2': (zscore_ss2_sm, run_valid_ss2),
     }
     if has_good_ss1:
-        configs_rsd['good_ss1'] = (dff_ss1_rsd_safe, run_good_ss1)
+        configs_zscore['good_ss1'] = (zscore_ss1_sm, run_good_ss1)
     if has_good_ss2:
-        configs_rsd['good_ss2'] = (dff_ss2_rsd_safe, run_good_ss2)
+        configs_zscore['good_ss2'] = (zscore_ss2_sm, run_good_ss2)
 
-    stats_rsd = {}
-    for name, (traces, events) in configs_rsd.items():
+    stats_zscore = {}
+    for name, (traces, events) in configs_zscore.items():
         result = quantify_event_response(
                 corrected_traces=traces,
                 event_frames=events,
-                baseline_window=(-1, 0),
-                response_window=(0, 1.5),
+                baseline_window=pre_window,
+                response_window=post_window,
                 imaging_rate=30.0,
                 shuffle_test=False,
                 shuffle_params=shuffle_params
             )
         if result is not None:
-            stats_rsd[name] = result.drop(columns=drop_cols, errors='ignore')
+            stats_zscore[name] = result.drop(columns=drop_cols, errors='ignore')
 
     # Build list of suffixed DataFrames; for missing good configs, create NaN placeholders
-    stats_rsd_parts = []
+    stats_zscore_parts = []
     for name in ['valid_ss1', 'valid_ss2', 'good_ss1', 'good_ss2']:
-        if name in stats_rsd:
-            stats_rsd_parts.append(stats_rsd[name].add_suffix(f'_{name}'))
+        if name in stats_zscore:
+            stats_zscore_parts.append(stats_zscore[name].add_suffix(f'_{name}'))
         else:
-            template = next(iter(stats_rsd.values()))
+            template = next(iter(stats_zscore.values()))
             nan_df = pd.DataFrame(np.nan, index=range(n_active),
                                   columns=[f'{c}_{name}' for c in template.columns])
-            stats_rsd_parts.append(nan_df)
+            stats_zscore_parts.append(nan_df)
 
     # Combine all with suffixes and add unit_id
-    stats_rsd_combined = pd.concat(stats_rsd_parts, axis=1)
-    stats_rsd_combined.insert(0, 'unit_id', np.where(is_active_soma)[0])
-    stats_rsd_combined.to_parquet(OUTPUT_RES/f'{anm}-{date}_rsd_dff_profile.parquet')
-    # except:
-    #     print('!!!ERROR')
-    #     error_lst.append(f'{anm}-{date}')
+    stats_zscore_combined = pd.concat(stats_zscore_parts, axis=1)
+    stats_zscore_combined.insert(0, 'unit_id', np.where(is_active_soma)[0])
+    # append baseline mean and F trace median for later filtering
+    stats_zscore_combined['dff_baseline_min_ss1']=dff_ss1_baseline_min
+    stats_zscore_combined['dff_baseline_min_ss2']=dff_ss2_baseline_min
+    stats_zscore_combined['f_all_median']=f_all_median
+    stats_zscore_combined.to_parquet(OUTPUT_RES/f'{anm}-{date}_zscored_profile_pre{pre_window}_post{post_window}.parquet')
+    
+    # b = np.stack(stats_zscore_combined['mean_profile_valid_ss1'])
+    # fig, ax = plt.subplots()
+    # pf.plot_mean_trace(b, ax)
+
+    # # =============================================================================
+    # #  calculate stats for robust sd filtered traces   
+    # # =============================================================================
+    # dff_ss1_rsd = robust_filter_along_axis(dff_ss1, gpu=1).get() # smoothed already, sigma=1
+    # dff_ss2_rsd = robust_filter_along_axis(dff_ss2, gpu=1).get() # smoothed already, sigma=1
+    
+    # thresh_ss1 = np.nanmean(dff_ss1_rsd) + 5*np.nanstd(dff_ss1_rsd)
+    # thresh_ss2 = np.nanmean(dff_ss2_rsd) + 5*np.nanstd(dff_ss2_rsd)
+    # dff_ss1_rsd_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss1_rsd, fix_thresh=thresh_ss1)
+    # dff_ss2_rsd_safe = np.apply_along_axis(trace_filter, axis=-1, arr=dff_ss2_rsd, fix_thresh=thresh_ss2)
+    
+    # shuffle_params={'times': 1000,
+    #                 'pre_event_window':  2, # seconds
+    #                 'post_event_window': 4 
+    #                 }
+    
+    # # Define configurations for each stats calculation
+    # configs_rsd = {
+    #     'valid_ss1': (dff_ss1_rsd_safe, run_valid_ss1),
+    #     'valid_ss2': (dff_ss2_rsd_safe, run_valid_ss2),
+    # }
+    # if has_good_ss1:
+    #     configs_rsd['good_ss1'] = (dff_ss1_rsd_safe, run_good_ss1)
+    # if has_good_ss2:
+    #     configs_rsd['good_ss2'] = (dff_ss2_rsd_safe, run_good_ss2)
+
+    # stats_rsd = {}
+    # for name, (traces, events) in configs_rsd.items():
+    #     result = quantify_event_response(
+    #             corrected_traces=traces,
+    #             event_frames=events,
+    #             baseline_window=pre_window,
+    #             response_window=post_window,
+    #             imaging_rate=30.0,
+    #             shuffle_test=False,
+    #             shuffle_params=shuffle_params
+    #         )
+    #     if result is not None:
+    #         stats_rsd[name] = result.drop(columns=drop_cols, errors='ignore')
+
+    # # Build list of suffixed DataFrames; for missing good configs, create NaN placeholders
+    # stats_rsd_parts = []
+    # for name in ['valid_ss1', 'valid_ss2', 'good_ss1', 'good_ss2']:
+    #     if name in stats_rsd:
+    #         stats_rsd_parts.append(stats_rsd[name].add_suffix(f'_{name}'))
+    #     else:
+    #         template = next(iter(stats_rsd.values()))
+    #         nan_df = pd.DataFrame(np.nan, index=range(n_active),
+    #                               columns=[f'{c}_{name}' for c in template.columns])
+    #         stats_rsd_parts.append(nan_df)
+
+    # # Combine all with suffixes and add unit_id
+    # stats_rsd_combined = pd.concat(stats_rsd_parts, axis=1)
+    # stats_rsd_combined.insert(0, 'unit_id', np.where(is_active_soma)[0])
+    # # append baseline mean and F trace median for later filtering
+    # stats_rsd_combined['dff_baseline_min_ss1']=dff_ss1_baseline_min
+    # stats_rsd_combined['dff_baseline_min_ss2']=dff_ss2_baseline_min
+    # stats_rsd_combined['f_all_median']=f_all_median
+    # stats_rsd_combined.to_parquet(OUTPUT_RES/f'{anm}-{date}_rsd_dff_profile_pre{pre_window}_post{post_window}.parquet')
+    # # except:
+    # #     print('!!!ERROR')
+    # #     error_lst.append(f'{anm}-{date}')
 
 
 

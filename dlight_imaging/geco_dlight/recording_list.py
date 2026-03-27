@@ -211,12 +211,17 @@ if os.path.exists(SESSION_INFO_PATH):
     MIN_PERC_VALID = 0.6 # % valid trials
     MAX_TRIAL_LENGTH = 6000 # trial length, run onset to next trial's run onset, ms
     MAX_SIG_SPEED_CORR = 0.3 # max correlatio with speed, to exclude sessions with clear movement
-    
+    MAX_CROSS_CORR = 0.55 # cross-correlation between dLight and speed at lag0
     df_session_selected = df_session_info.loc[(df_session_info['lick_idx']>MIN_LICK_IDX)&
                                   (df_session_info['max_speed_median']>MIN_MAX_SPEED)&
                                   (df_session_info['valid_trials_num']<200)&
                                   (df_session_info['valid_trials_perc']>MIN_PERC_VALID)&
                                   (df_session_info['full_trial_len_median']<MAX_TRIAL_LENGTH)&
-                                  (df_session_info['speed_corr_single_trial_r_median']<MAX_SIG_SPEED_CORR)
+                                  (df_session_info['speed_corr_single_trial_r_median']<MAX_SIG_SPEED_CORR)&
+                                  # (df_session_info['speed_lag0_corr=']<MAX_CROSS_CORR)&
+                                  (~df_session_info.index.str.contains('AC934'))
                                   ]  
-    rec_lst_dlight_dbh = df_session_selected.index.tolist()
+    rec_lst_dlight_geco = df_session_selected.index.tolist()
+    
+    # rec_lst_dlight_geco_new = df_session_selected.loc[(df_session_info['speed_lag0_corr=']<MAX_CROSS_CORR)].index.tolist()
+    rec_lst_dlight_geco_new = df_session_selected.loc[(~df_session_selected.index.str.contains('AC991'))].index.tolist()

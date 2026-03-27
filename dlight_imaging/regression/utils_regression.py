@@ -43,11 +43,20 @@ def load_bin_file(data_path, file_name, n_frames=2000, height=512, width=512):
     mov = reg_data.astype('float32')
     return mov
 
-def load_masks_axon_dlight(rec, OUT_DIR_RAW_REGRESS, dilation_steps = (0, 2, 4, 6, 8, 10)):
+def load_masks_axon_dlight(rec, OUT_DIR_RAW_REGRESS, dilation_steps = (0, 2, 4, 6, 8, 10),
+                           constrain_to_grid = True,
+                           visualize_neu = False,
+                           visualize_dilation = False,
+                           visualize_regressor = False):
     p_masks = OUT_DIR_RAW_REGRESS / rf'{rec}'/'masks'
-    if not p_masks.exists():
-        p_masks.mkdir(parents=True, exist_ok=False)
-        extract_axon_dlight_masks(rec, p_masks, dilation_steps)
+    if not (p_masks/'dilated_global_axon_k=10.npy').exists():
+        if not p_masks.exists():
+            p_masks.mkdir(parents=True, exist_ok=False)
+        extract_axon_dlight_masks(rec, p_masks, dilation_steps,
+                                  constrain_to_grid,
+                                  visualize_neu,
+                                  visualize_dilation,
+                                  visualize_regressor)
     return p_masks
 
 def load_masks_geco_dlight(rec, OUT_DIR_RAW_REGRESS):
@@ -92,6 +101,35 @@ def get_valid_grids(res_traces):
 
     print(f"Found {len(valid_grids)} valid grids out of {n_blocks_y * n_blocks_x} total grids")
     return valid_grids
+
+def get_axon_grids(global_axon_mask, n_grid=32):
+    """
+    Count axon pixels per grid block in a 2D mask (H, W), return valid grids and counts.
+    """
+    H, W = global_axon_mask.shape
+    grid_h = H // n_grid
+    grid_w = W // n_grid
+
+    valid_grids = []
+    pix_counts = np.zeros((n_grid, n_grid), dtype=np.int32)
+
+    for gy in range(n_grid):
+        y0 = gy * grid_h
+        y1 = (gy + 1) * grid_h if gy < n_grid - 1 else H  # include remainder in last block
+
+        for gx in range(n_grid):
+            x0 = gx * grid_w
+            x1 = (gx + 1) * grid_w if gx < n_grid - 1 else W
+
+            block = global_axon_mask[y0:y1, x0:x1]
+            cnt = int(np.count_nonzero(block))  # True pixels
+            pix_counts[gy, gx] = cnt
+
+            if cnt > 0:
+                valid_grids.append((gy, gx))
+
+    print(f"Found {len(valid_grids)} valid grids out of {n_grid * n_grid} total grids")
+    return valid_grids, pix_counts
 
 # trace extraction functions
 def _trace_extraction_worker(block_idx, mov, movr, 
@@ -138,9 +176,58 @@ def _trace_extraction_worker(block_idx, mov, movr,
             'neuropil': neuropil_trace,
             'red_neuropil': neuropil_trace_red,}
 
-def traces_extraction_parallel(mov, movr, global_mask_green, global_mask_red, 
+# trace extraction functions
+def _trace_extraction_worker_grid_free(block_idx, mov, movr,
+                                       global_mask_dilated_axon,
+                                       global_mask_red, global_mask_dlight,
+                                       dlight_regressor_mask, neuropil_mask,
+                                       grid_size=16):
+
+    H, W = mov.shape[1], mov.shape[2]
+    n_blocks_x = W // grid_size
+    row, col = block_idx // n_blocks_x, block_idx % n_blocks_x
+
+    block_slice = tuple(slice(r * grid_size, (r + 1) * grid_size) for r in [row, col])
+
+    # --- 1. Extract Full-Length Traces ---
+    local_dilated_axon_mask = global_mask_dilated_axon[row, col, :, :]
+    local_green_mask = (local_dilated_axon_mask)&(global_mask_dlight)
+    n_green_mask = int(np.sum(local_green_mask))
+    if n_green_mask < 10: return None
+    # green_mask_full = np.zeros_like(global_mask_green)
+    # green_mask_full[block_slice] = local_green_mask
+    original_green_trace = mov[:, local_green_mask].mean(axis=1)
+
+    local_dlight_regressor_mask = dlight_regressor_mask[row, col, :, :]
+    n_regressor_mask = int(np.sum(local_dlight_regressor_mask))
+    if n_regressor_mask < 10: return None
+    # dlight_regressor_mask_full = np.zeros_like(dlight_regressor_mask)
+    # dlight_regressor_mask_full[block_slice] = local_dlight_regressor_mask
+    dlight_regressor_trace = mov[:, local_dlight_regressor_mask].mean(axis=1)
+
+    local_red_mask = global_mask_red[row, col, :, :]
+    n_red_mask = int(np.sum(local_red_mask))
+    if n_red_mask < 10: return None
+    # red_mask_full = np.zeros_like(global_mask_red)
+    # red_mask_full[block_slice] = local_red_mask
+    red_trace = movr[:, local_red_mask].mean(axis=1)
+    
+    local_neuropil_mask = neuropil_mask[row, col, :, :]
+    n_neuropil_mask = int(np.sum(local_neuropil_mask))
+    if n_neuropil_mask < 10: return None
+    neuropil_trace = mov[:, local_neuropil_mask].mean(axis=1)
+    neuropil_trace_red = movr[:, local_neuropil_mask].mean(axis=1)
+    
+    return {'original_dlight': original_green_trace,
+            'red': red_trace, 'dlight_regressor': dlight_regressor_trace,
+            'neuropil': neuropil_trace,
+            'red_neuropil': neuropil_trace_red,}
+
+def traces_extraction_parallel(mov, movr, global_mask_dilated_axon, 
+                               global_mask_red, global_mask_dlight,
                                dlight_regressor_mask, neuropil_mask,
                                out_dir=None,
+                               grid_free=False,
                                **kwargs):
     """
     Main orchestrator that runs single-trial red-channel correction in parallel.
@@ -157,12 +244,24 @@ def traces_extraction_parallel(mov, movr, global_mask_green, global_mask_red,
     worker_params = {
         'grid_size': kwargs.get('grid_size', 16),
     }
-    all_traces = Parallel(n_jobs=n_jobs, prefer="threads")(
-        delayed(_trace_extraction_worker)(i, mov, movr, 
-                                         global_mask_green, global_mask_red,
-                                         dlight_regressor_mask, neuropil_mask,
-                                         **worker_params) 
-        for i in tqdm(range(num_blocks), desc="extracting traces from each block..."))
+    if grid_free:
+        print('!!!!grid-free ROIs')
+        all_traces = Parallel(n_jobs=n_jobs, prefer="threads")(
+            delayed(_trace_extraction_worker_grid_free)(i, mov, movr, 
+                                             global_mask_dilated_axon, 
+                                             global_mask_red, global_mask_dlight,
+                                             dlight_regressor_mask, neuropil_mask,
+                                             **worker_params) 
+            for i in tqdm(range(num_blocks), desc="extracting traces from each block..."))
+    else:
+        global_mask_green = (global_mask_dilated_axon)&(global_mask_dlight)
+        all_traces = Parallel(n_jobs=n_jobs, prefer="threads")(
+            delayed(_trace_extraction_worker)(i, mov, movr, 
+                                             global_mask_green, global_mask_red,
+                                             dlight_regressor_mask, neuropil_mask,
+                                             **worker_params) 
+            for i in tqdm(range(num_blocks), desc="extracting traces from each block..."))
+        
     
     # Unpack results into grid arrays
     original_traces_grid = np.full((n_blocks_y, n_blocks_x, T), np.nan)
@@ -192,10 +291,10 @@ def traces_extraction_parallel(mov, movr, global_mask_green, global_mask_red,
         neuropil_red=red_neuropil_traces_grid
     )
 
-def traces_extraction_parallel_roi(mov, movr, global_mask_green, global_mask_red, 
-                               dlight_regressor_mask, neuropil_mask,
-                               out_dir=None,
-                               **kwargs):
+def traces_extraction_parallel_roi(mov, movr, global_mask_green, global_mask_red,
+                                   dlight_regressor_mask, neuropil_mask,
+                                   out_dir=None,
+                                   **kwargs):
     """
     Main orchestrator that runs single-trial red-channel correction in parallel.
     """
@@ -211,8 +310,9 @@ def traces_extraction_parallel_roi(mov, movr, global_mask_green, global_mask_red
     worker_params = {
         'grid_size': kwargs.get('grid_size', 16),
     }
+
     all_traces = Parallel(n_jobs=n_jobs, prefer="threads")(
-        delayed(_trace_extraction_worker)(i, mov, movr, 
+        delayed(_trace_extraction_worker_grid_free)(i, mov, movr, 
                                          global_mask_green, global_mask_red,
                                          dlight_regressor_mask, neuropil_mask,
                                          **worker_params) 

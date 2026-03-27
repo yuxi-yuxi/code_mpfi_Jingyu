@@ -9,14 +9,14 @@ import os
 import sys
 import numpy as np
 import pandas as pd
+from pathlib import Path
 import matplotlib.pyplot as plt
 from scipy.stats import wilcoxon, iqr
 from scipy.ndimage import gaussian_filter1d
 
 if r"Z:\Jingyu\code_mpfi_Jingyu" not in sys.path:
     sys.path.insert(0, r"Z:\Jingyu\code_mpfi_Jingyu")
-from drug_infusion.rec_lst_infusion import selected_rec_lst
-from drug_infusion.trial_selection import select_good_trials
+from common.trial_selection import select_good_trials
 from drug_infusion.utils_infusion import load_behaviour
 from common.utils_basic import zero_padding
 from common import plotting_functions_Jingyu as pf
@@ -51,7 +51,7 @@ def plot_paired_violin_comparison(df, colname, ylabel=None, title_prefix=None, y
     ctrl_pairs = np.array(ctrl_pairs)
     sch_pairs = np.array(sch_pairs)
     if len(ctrl_pairs) == 0 or len(sch_pairs) == 0:
-        print(f"⚠️ Not enough data for {colname}. Skipping.")
+        print(f"!!! Not enough data for {colname}. Skipping.")
         return
 
     ctrl_p = wilcoxon(ctrl_pairs[:, 0], ctrl_pairs[:, 1]).pvalue
@@ -102,7 +102,7 @@ def plot_paired_violin_comparison(df, colname, ylabel=None, title_prefix=None, y
     # plt.show()
     return fig
 
-def extract_behaviour_info(rec_lst):
+def extract_behaviour_info(rec_lst, PATH_beh, labels):
     df_beh_pool = pd.DataFrame(
         {'anm_id': str,
          'date': str,
@@ -141,10 +141,10 @@ def extract_behaviour_info(rec_lst):
         # rew_percen = []
         # fig, ax = plt.subplots(figsize=(3,2), dpi=200)
         print('processing {}-------------------------'.format(rec['anm']+'-'+rec['date']))
-        for i, ss in enumerate(rec['session']):
+        for i, ss in enumerate(['02', '04']):
             # load behaviour
             session = rec['anm']+'-'+rec['date']+'-'+ss
-            p_beh = rf"Z:\Jingyu\Code\Python\2p_SCH23390_infusion\behaviour_profile\{session}.pkl"
+            p_beh = PATH_beh / f'{session}.pkl'
             beh = pd.read_pickle(p_beh)
             selected_trials = select_good_trials(beh)
             selected_trials[:10] = 0 # exclude first 10 trials
@@ -205,7 +205,8 @@ def extract_behaviour_info(rec_lst):
                                                          rec['anm'], # anm_id
                                                          rec['date'],
                                                          session,
-                                                         rec['label'][i],
+                                                         # rec['label'][i],
+                                                         labels[i],
                                                          
                                                          rew_rate,
                                                          licks_dist,
@@ -240,28 +241,27 @@ def extract_behaviour_info(rec_lst):
 # drug = 'prazosin'
 # drug = 'propranolol'
 drug = 'SCH'
-df_drug = pd.read_parquet(rf"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion\processed_dataframe\df_drug_pool_pyr_first3_{drug}.parquet")
-df_ctrl = pd.read_parquet(rf"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion\processed_dataframe\df_ctrl_pool_pyr_first3_{drug}.parquet")
+OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion")
+OUTPUT_RES = OUT_DIR_RAW_DATA /'processed_dataframe'
+df_drug = pd.read_parquet(OUTPUT_RES/rf"df_drug_pool_pyr_first3_{drug}.parquet")
+df_ctrl = pd.read_parquet(OUTPUT_RES/rf"df_ctrl_pool_pyr_first3_{drug}.parquet")
+PATH_beh = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion\behaviour_profile")
+
+
 
 # Extract unique recording info from neuron-level dataframes
 def get_unique_rec_info(df):
-    """Extract unique (anm, date) recordings with session/label info."""
-    rec_info = df[['anm', 'date', 'session', 'label']].drop_duplicates(['anm', 'date'])
-    # Convert tuple columns to lists if needed (parquet may store as tuple)
-    rec_info = rec_info.copy()
-    rec_info['session'] = rec_info['session'].apply(lambda x: list(x) if isinstance(x, tuple) else x)
-    rec_info['label'] = rec_info['label'].apply(lambda x: list(x) if isinstance(x, tuple) else x)
-    return rec_info.reset_index(drop=True)
+    return df[['anm', 'date']].drop_duplicates().reset_index(drop=True)
 
 rec_drug = get_unique_rec_info(df_drug)
 rec_ctrl = get_unique_rec_info(df_ctrl)
 
-out_dir = r"Z:\Jingyu\LC_HPC_manuscript\supp_drug_infusion"
+out_dir = r"Z:\Jingyu\LC_HPC_manuscript\fig_infusion\behaviour"
 if not os.path.exists(out_dir):
     os.makedirs(out_dir)
 
-df_beh_drug = extract_behaviour_info(rec_drug)
-df_beh_ctrl = extract_behaviour_info(rec_ctrl)
+df_beh_drug = extract_behaviour_info(rec_drug, PATH_beh, labels=['baseline', drug])
+df_beh_ctrl = extract_behaviour_info(rec_ctrl, PATH_beh, labels=['baseline', 'ctrl'])
 
 #%% mean lick trace
 xaxis = np.arange(4000)/1000

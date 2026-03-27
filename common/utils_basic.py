@@ -10,6 +10,31 @@ from scipy.stats import sem, median_abs_deviation
 import cupy as cp
 from cupyx.scipy.ndimage import gaussian_filter1d, minimum_filter1d, maximum_filter1d, percentile_filter
 
+def vectorized_roll(arr, shifts, xp=np):
+    """
+    Vectorized circular roll: roll each row by a different shift amount.
+
+    Parameters:
+    -----------
+    arr : ndarray (n_rows, n_cols)
+        2D array to roll
+    shifts : ndarray (n_rows,)
+        Shift amount for each row
+    xp : module
+        numpy or cupy
+
+    Returns:
+    --------
+    rolled : ndarray (n_rows, n_cols)
+        Array with each row circularly shifted
+    """
+    n_rows, n_cols = arr.shape
+    # Create index mapping: (arange - shifts) % n_cols
+    indices = (xp.arange(n_cols)[None, :] - shifts[:, None]) % n_cols  # (n_rows, n_cols)
+    # Use take_along_axis for efficient gathering
+    rolled = xp.take_along_axis(arr, indices, axis=1)
+    return rolled
+
 def run_of_ones(mask, axis=-1):
     """
     mask: array-like, shape (n_rois, n_frames) (or any 2D)
@@ -44,38 +69,124 @@ def run_of_ones(mask, axis=-1):
 
     return lengths_by_row
 
+def nearest_mapping(A, B):
+    '''
+    Map each value in A to the index of the closest value in B.
+
+    This function returns, for every element A[i], the index j such that
+    |B[j] - A[i]| is minimized (ties are broken in favor of the left neighbor,
+    because the comparison uses '<' rather than '<=').
+    
+    Implementation details:
+    - Sorts B once and uses `np.searchsorted` to find insertion positions for A.
+    - Compares the candidate neighbor on the left and right to choose the nearest.
+    - Converts indices back to the original (unsorted) indexing of B.
+    
+    Parameters
+    ----------
+    A : array_like, shape (N,)
+        Query values to be matched (e.g., running time stamps).
+    B : array_like, shape (M,)
+        Reference values to search within (e.g., frame time stamps). Can be unsorted.
+    
+    Returns
+    -------
+    nearest_idx : ndarray, shape (N,), dtype=int
+        For each A[i], `nearest_idx[i]` is the index into the original B array
+        of the element closest to A[i].
+    
+    Notes
+    -----
+    - Time complexity is O(M log M + N log M) due to sorting B and searchsorted.
+      If you will call this repeatedly with the same B, consider sorting B once
+      outside the function and reusing the sorted arrays for speed.
+
+    '''
+    # make sure A and B are np arrays
+    A = np.array(A)
+    B = np.array(B)
+    
+    # 1) Ensure B is sorted (do this once per session)
+    order = np.argsort(B)
+    Bs = B[order]
+    
+    # 2) Insertion positions of each A in sorted B
+    j = np.searchsorted(Bs, A, side="left")   # shape (N,), values in [0, M]
+    
+    # 3) Compare neighbor on the left vs right to get the nearest
+    j0 = np.clip(j - 1, 0, len(Bs) - 1)       # left candidate
+    j1 = np.clip(j,     0, len(Bs) - 1)       # right candidate
+    
+    choose_right = np.abs(Bs[j1] - A) < np.abs(Bs[j0] - A)
+    nearest_sorted_idx = np.where(choose_right, j1, j0)  # indices into Bs
+    
+    # 4) Map back to original indices of frame_times
+    nearest_idx = order[nearest_sorted_idx]   # indices into original B
+    
+    return nearest_idx
+
+# def normalize(arr, axis=-1, gpu=0, **kwargs):
+#     if gpu :
+#         if 'max_perc' in kwargs:
+#             arr_max = cp.nanpercentile(arr, kwargs['max_perc'], axis=axis, keepdims=True)
+#         else:
+#             arr_max = cp.nanmax(arr, axis=axis, keepdims=True)
+        
+#         if 'min_perc' in kwargs:
+#             arr_min = cp.nanpercentile(arr, kwargs['min_perc'], axis=axis, keepdims=True)
+#         else:
+#             arr_min = cp.nanmin(arr, axis=axis, keepdims=True)
+        
+#         # Avoid division by zero in case all elements are the same
+#         arr_range = arr_max - arr_min
+#         arr_range[arr_range == 0] = cp.nan
+#     else:   
+#         if 'max_perc' in kwargs:
+#             arr_max = np.nanpercentile(arr, kwargs['max_perc'], axis=axis, keepdims=True)
+#         else:
+#             arr_max = np.nanmax(arr, axis=axis, keepdims=True)
+        
+#         if 'min_perc' in kwargs:
+#             arr_min = np.nanpercentile(arr, kwargs['min_perc'], axis=axis, keepdims=True)
+#         else:
+#             arr_min = np.nanmin(arr, axis=axis, keepdims=True)
+    
+#         # Avoid division by zero in case all elements are the same
+#         arr_range = arr_max - arr_min
+#         arr_range[arr_range == 0] = np.nan
+    
+#     normalized_arr = (arr - arr_min) / arr_range
+    
+#     return normalized_arr
+
 def normalize(arr, axis=-1, gpu=0, **kwargs):
-    if gpu :
-        if 'max_perc' in kwargs:
-            arr_max = cp.nanpercentile(arr, kwargs['max_perc'], axis=axis, keepdims=True)
-        else:
-            arr_max = cp.nanmax(arr, axis=axis, keepdims=True)
-        
-        if 'min_perc' in kwargs:
-            arr_min = cp.nanpercentile(arr, kwargs['min_perc'], axis=axis, keepdims=True)
-        else:
-            arr_min = cp.nanmin(arr, axis=axis, keepdims=True)
-        
-        # Avoid division by zero in case all elements are the same
-        arr_range = arr_max - arr_min
-        arr_range[arr_range == 0] = cp.nan
-    else:   
-        if 'max_perc' in kwargs:
-            arr_max = np.nanpercentile(arr, kwargs['max_perc'], axis=axis, keepdims=True)
-        else:
-            arr_max = np.nanmax(arr, axis=axis, keepdims=True)
-        
-        if 'min_perc' in kwargs:
-            arr_min = np.nanpercentile(arr, kwargs['min_perc'], axis=axis, keepdims=True)
-        else:
-            arr_min = np.nanmin(arr, axis=axis, keepdims=True)
-    
-        # Avoid division by zero in case all elements are the same
-        arr_range = arr_max - arr_min
-        arr_range[arr_range == 0] = np.nan
-    
-    normalized_arr = (arr - arr_min) / arr_range
-    
+    xp = cp if gpu else np
+
+    # max
+    if 'max_perc' in kwargs:
+        arr_max = xp.nanpercentile(arr, kwargs['max_perc'], axis=axis, keepdims=True)
+    else:
+        arr_max = xp.nanmax(arr, axis=axis, keepdims=True)
+
+    # min
+    if 'min_perc' in kwargs:
+        arr_min = xp.nanpercentile(arr, kwargs['min_perc'], axis=axis, keepdims=True)
+    else:
+        arr_min = xp.nanmin(arr, axis=axis, keepdims=True)
+
+    arr_range = arr_max - arr_min
+    const_mask = (arr_range == 0)                      # constant slices (including all-zeros)
+    all_zero_mask = const_mask & (arr_min == 0) & (arr_max == 0)
+
+    # Make division safe ONLY for all-zero slices; keep NaN behavior for other constant slices
+    safe_range = xp.where(all_zero_mask, 1, arr_range)  # all-zero -> divide by 1; others unchanged
+    safe_range = xp.where(const_mask & ~all_zero_mask, xp.nan, safe_range)  # non-zero constant -> NaN
+
+    normalized_arr = (arr - arr_min) / safe_range
+
+    # For all-zero slices, force output to 0
+    normalized_arr = xp.where(all_zero_mask, 0, normalized_arr)
+
     return normalized_arr
 
 def zero_padding(vector, max_length):
@@ -87,7 +198,7 @@ def zero_padding(vector, max_length):
         new_vector = vector[:max_length]
     return new_vector
 
-def trace_filter(trace, n_sd=5, fix_thresh=None):
+def trace_filter(trace_ori, n_sd=5, fix_thresh=None, return_outlier=False):
     """
     Filter extreme values in a 1D trace based on standard deviation threshold.
 
@@ -106,15 +217,18 @@ def trace_filter(trace, n_sd=5, fix_thresh=None):
     1D array
         Filtered trace with extreme values replaced
     """
-    if trace.ndim != 1:
+    if trace_ori.ndim != 1:
         raise ValueError("trace_filter_sd only accepts 1D arrays")
 
-    trace = trace.copy().astype(float)
+    trace = trace_ori.copy().astype(float)
     
     # Get valid (finite) values for statistics
     valid_mask = np.isfinite(trace)
     if valid_mask.sum() < 2:
-        return trace
+        if return_outlier:
+            return trace, np.nan
+        else:
+            return trace
     
     if fix_thresh is None: # use n_std thresholding
         mean_val = np.nanmean(trace)
@@ -135,7 +249,7 @@ def trace_filter(trace, n_sd=5, fix_thresh=None):
         outlier_indices = np.where(outlier_mask)[0]
 
     # Replace outliers with interpolated neighbor values
-    for idx in outlier_indices:
+    # for idx in outlier_indices:
         # # Find left valid neighbor
         # left_val = np.nan
         # for i in range(idx - 1, -1, -1):
@@ -159,9 +273,12 @@ def trace_filter(trace, n_sd=5, fix_thresh=None):
         #     trace[idx] = right_val
         
         # Replace with np.nan
-        trace[idx] = np.nan
-
-    return trace
+        # trace[idx] = np.nan
+    trace[outlier_mask] = np.nan
+    if return_outlier:
+        return trace, trace_ori[outlier_mask]
+    else:
+        return trace
 
 
 # def trace_filter(dFF, thresh=99.999):

@@ -79,6 +79,17 @@ venv.bak/
 # PROJECT-SPECIFIC
 # ===================
 
+# Folders to ignore
+defunc/
+common/defunc/
+Rdlight_imaging/
+dlight_imagaing_learning/
+
+# Place cell related code in drug_infusion
+drug_infusion/place_cell_analysis.py
+drug_infusion/place_cell_detection.py
+drug_infusion/plot_place_cell_analysis.py
+
 # Large data files - DO NOT COMMIT
 *.pkl
 *.pickle

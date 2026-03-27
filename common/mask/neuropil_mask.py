@@ -8,6 +8,7 @@ import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
 from itertools import count
+from common.plotting_functions_Jingyu import save_fig
 
 def extendROI(ypix, xpix, Ly, Lx, niter=1):
     """ extend ypix and xpix by niter pixel(s) on each side """
@@ -140,30 +141,59 @@ def overlay_grid(ax, shape, grid_size):
         ax.axvline(j, color='white', linewidth=0.5, alpha=0.3)
         
 def fiber_block_to_neuropil_masks(current_axon_mask, global_axon_mask, grid_size,
-                                  output_dir=None,):
+                                  constrain_to_grid = True,
+                                  output_dir=None,
+                                  visualize=False,
+                                  fig_out=None,):
+    global_axon_mask = np.any(global_axon_mask , axis=(0, 1))
     h, w = global_axon_mask.shape
     n_y = (h + grid_size - 1) // grid_size
     n_x = (w + grid_size - 1) // grid_size
     neuropil_masks = np.zeros((n_y, n_x, h, w), dtype=bool)
+    n = 0
     for by, ii in enumerate(range(0, h, grid_size)):          # by = block index (y)
         for bx, jj in enumerate(range(0, w, grid_size)):      # bx = block index (x)
     
             grid_map = np.zeros_like(global_axon_mask, dtype=bool)
             grid_map[ii:min(ii+grid_size, h), jj:min(jj+grid_size, w)] = True
     
-            fiber_map = current_axon_mask & grid_map
+            # fiber_map = current_axon_mask & grid_map
+            fiber_map = current_axon_mask[by, bx, :, :]
     
             if fiber_map.any():
                 fiber_neuropil = roi_map_to_neuropil_masks(fiber_map)
-                fiber_neuropil = fiber_neuropil&(~current_axon_mask)&(~global_axon_mask)
+                fiber_neuropil = fiber_neuropil&(~fiber_map)&(~global_axon_mask)
+                n += 1
+                if visualize & (n<2):
+                    y0 = max(ii - grid_size, 0)
+                    y1 = min(ii + 2 * grid_size, h)
+                    x0 = max(jj - grid_size, 0)
+                    x1 = min(jj + 2 * grid_size, w)
+
+                    fig, ax = plt.subplots(figsize=(3,3), dpi=100)
+                    ax.imshow(np.where(fiber_map[y0:y1, x0:x1]>0, 1 , np.nan),
+                              interpolation='none',
+                              cmap='Set1', alpha=0.5)
+                    ax.imshow(np.where(fiber_neuropil[y0:y1, x0:x1]>0, 1 , np.nan),
+                              interpolation='none',
+                              cmap='tab20b', alpha=0.5)
+                    ax.set_title(f'Grid ({by}, {bx})')
+                    if fig_out is not None:
+                        # fig_out.mkdir(parents=True, exexist_ok=True)
+                        # save dilation review
+                        save_fig(fig, fig_out, 'grid_free_neuropil_review', save=1, forms=['png',])
+                    
             else:
                 fiber_neuropil = np.zeros_like(global_axon_mask, dtype=bool)
-    
+                
             neuropil_masks[by, bx, :, :] = fiber_neuropil
     if output_dir is None:
         return neuropil_masks
     else:
         np.save(output_dir, neuropil_masks)
+        
+    
+        
         
     
 #%%

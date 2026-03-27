@@ -31,24 +31,87 @@ def mpl_formatting(): # from Dinghao, for plotting editable pdf with matplot
         })
 mpl_formatting() 
 
-def save_fig(fig, OUT_DIR_FIG, fig_name='', save=True):
+def save_fig(fig, OUT_DIR_FIG, fig_name='', save=True,
+             forms=None,):
+    if forms is None:
+        forms = ['png', 'pdf',]
     fig.tight_layout()
     if save:
         OUT_DIR_FIG = Path(OUT_DIR_FIG)
-        for form in ['png', 'pdf',]:
+        for form in forms:
             plt.savefig(OUT_DIR_FIG/f'{fig_name}.{form}',
                         dpi=300)
     else:
         plt.show()
     plt.close()
-    
-def plot_two_traces_with_binned_stats(profile_a, profile_b, ax=None,
+
+def plot_cdf_profiles(profile_a, profile_b,
+                      label_a='profile_a', label_b='profile_b',
+                      colors = ['steelblue', 'orange'],
+                      xlabel = 'value', ylabel='CDF',
+                      ax=None, title='CDF',
+                      lw=1):
+    """
+    Plot empirical CDFs of two 1D profiles using matplotlib.
+
+    Parameters
+    ----------
+    profile_a : array-like
+        First profile values.
+    profile_b : array-like
+        Second profile values.
+    label_a : str
+        Label for profile_a.
+    label_b : str
+        Label for profile_b.
+    ax : matplotlib.axes.Axes or None
+        Existing axis to plot on. If None, create a new figure.
+    title : str
+        Plot title.
+
+    Returns
+    -------
+    fig, ax : matplotlib Figure and Axes
+    """
+    profile_a = np.asarray(profile_a).ravel()
+    profile_b = np.asarray(profile_b).ravel()
+
+    # remove NaNs
+    profile_a = profile_a[~np.isnan(profile_a)]
+    profile_b = profile_b[~np.isnan(profile_b)]
+
+    # sort values for empirical CDF
+    x_a = np.sort(profile_a)
+    y_a = np.arange(1, len(x_a) + 1) / len(x_a)
+
+    x_b = np.sort(profile_b)
+    y_b = np.arange(1, len(x_b) + 1) / len(x_b)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(2, 2), dpi=150)
+    else:
+        fig = ax.figure
+
+    ax.plot(x_a, y_a, label=label_a, linewidth=lw, color=colors[0])
+    ax.plot(x_b, y_b, label=label_b, linewidth=lw, color=colors[1])
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend(frameon=False)
+    ax.grid(True, alpha=0.3)
+
+    return fig, ax    
+
+def plot_two_traces_with_binned_stats(profile_a, profile_b, 
+                                      bef, aft,
+                                      ax=None,
                                       test='ranksum',
                                       time_windows=[(-0.5, 0.5), (0.5, 1.5), (1.5, 2.5), (2.5, 3.5)],
                                       baseline_window=(-0.5, 0),
                                       labels = ['a', 'b'],
                                       colors = ['steelblue', 'orange'],
-                                      bef=1, aft=4, sample_freq=30,
+                                      sample_freq=30,
                                       figsize=(3, 3),
                                       # --- new options for scalebar ---
                                       show_scalebar=False,
@@ -102,6 +165,14 @@ def plot_two_traces_with_binned_stats(profile_a, profile_b, ax=None,
             **{k + "_stat": v.statistic for k, v in tests.items()},
             **{k + "_pval": v.pvalue for k, v in tests.items()},
         })
+        
+        # fig, ax = plot_unpaired_violin(profile_a_mean, profile_b_mean,
+        #                        colors=('firebrick', 'lightcoral'),
+        #                        m_point = 'median',
+        #                        colname=['DA-UP\nPyrUp', 'non-DA-Up\nPyrUp'], 
+        #                        ylabel='mean_dFF', ylim=None,
+        #                        title_prefix=f"{window[0]}–{window[1]} s\n mean_diff={np.mean(profile_a_mean)-np.mean(profile_b_mean)}\n",
+        #                        )
 
     # Convert to DataFrame
     df_stats = pd.DataFrame(results)
@@ -158,7 +229,8 @@ def plot_two_traces_with_binned_stats(profile_a, profile_b, ax=None,
     # Clean spines
     ax.spines[['top', 'right']].set_visible(False)
     ax.legend(frameon=False, loc='lower left')
-
+    
+    ax.axvline(0, 0, c='grey', ls='--')
     # ------------------------------------------------------------------
     # Optional scalebar (time + dF/F) and hiding original axes
     # ------------------------------------------------------------------
@@ -172,7 +244,7 @@ def plot_two_traces_with_binned_stats(profile_a, profile_b, ax=None,
             # Hide all spines so only traces + scalebar remain
             for spine in ax.spines.values():
                 spine.set_visible(False)
-
+            
         # Get current limits after all annotations
         x_min, x_max = ax.get_xlim()
         y_min, y_max = ax.get_ylim()
@@ -560,171 +632,6 @@ def plot_mean_trace(data, ax, xaxis=None, color='green', sem_off=False, **kwargs
         ax.fill_between(xaxis, mean+sem, mean-sem, 
                        facecolor=color, edgecolor='none', alpha=.3)
 
-# def plot_two_traces_with_scalebars(
-#     data1, data2, xaxis, ax=None,
-#     colors=("tab:green", "tab:red"),
-#     labels=("trace A", "trace B"),
-#     baseline_window=None,     # e.g., (-1.0, 0.0)
-#     sem_alpha=0.25, lw=1.2,
-#     timebar=1.0, dffbar=0.1,
-#     time_label="s", dff_label="dF/F",
-#     bar_side="right",
-#     bar_pad_frac=(0.05, 0.08),
-#     bar_y_bump_frac=0.06,     # extra vertical lift for the scalebar (fraction of y-range) when x-axis is shown
-#     center_mode="midrange",   # 'midrange' | 'median' | 'mean' | None
-#     # --- vertical event line ---
-#     vline=True, vline_t=0.0, vline_kwargs=None,
-#     # --- keep x-axis while still drawing small scalebar ---
-#     show_xaxis=False,
-#     x_tick_step=None,         # e.g., 0.5 (seconds). None = Matplotlib default
-#     xlabel=None,        # e.g., "Time (s)"; None = no label
-#     x_tick_params=None        # dict passed to ax.tick_params(axis='x', ...)
-# ):
-#     """
-#     One or two mean±SEM traces without full axes, with small time/ΔF/F scale bars.
-#     If both data1 and data2 are provided, trace2 is vertically offset to sit near
-#     the 'middle' of trace1. Can also draw a vertical line at vline_t.
-
-#     NEW:
-#       - show_xaxis: keep bottom spine and x ticks/labels while still drawing the
-#         small separate scalebar.
-#       - bar_y_bump_frac: nudges the small scalebar upward to avoid overlapping
-#         the x-axis when show_xaxis=True.
-#       - x_tick_step: control regular tick spacing; None uses Matplotlib defaults.
-#       - x_axis_label: optional x-axis label.
-#       - x_tick_params: dict for fine control of tick appearance (length, labelsize, etc.).
-#     """
-#     import numpy as np
-#     import matplotlib.pyplot as plt
-
-#     def _as_2d(arr):
-#         arr = np.asarray(arr)
-#         return arr[None, :] if arr.ndim == 1 else arr
-
-#     def _baseline_correct(arr2d, x, win):
-#         if win is None:
-#             return arr2d
-#         t0, t1 = win
-#         mask = (x >= t0) & (x <= t1)
-#         if not np.any(mask):
-#             # fallback: first 10% of samples
-#             k = max(1, int(0.1 * arr2d.shape[1]))
-#             mask = np.zeros(arr2d.shape[1], dtype=bool); mask[:k] = True
-#         base = np.nanmean(arr2d[:, mask], axis=1, keepdims=True)
-#         return arr2d - base
-
-#     def _mean_sem(arr2d):
-#         mean = np.nanmean(arr2d, axis=0)
-#         n_eff = np.sum(np.isfinite(arr2d), axis=0)
-#         std = np.nanstd(arr2d, axis=0, ddof=1)
-#         sem = np.divide(std, np.sqrt(np.maximum(n_eff, 1)), where=n_eff > 0)
-#         sem[~np.isfinite(sem)] = 0.0
-#         return mean, sem
-
-#     def _center_value(vec, mode):
-#         if mode is None: return 0.0
-#         if mode == "midrange": return 0.5*(np.nanmin(vec) + np.nanmax(vec))
-#         if mode == "median":   return float(np.nanmedian(vec))
-#         if mode == "mean":     return float(np.nanmean(vec))
-#         raise ValueError("center_mode must be {'midrange','median','mean',None}")
-
-#     xaxis = np.asarray(xaxis)
-#     if ax is None:
-#         fig, ax = plt.subplots(figsize=(3.2, 2.6), dpi=300)
-#     else:
-#         fig = ax.figure
-
-#     # --- plot data1 ---
-#     if data1 is not None:
-#         data1 = _as_2d(data1)
-#         data1 = _baseline_correct(data1, xaxis, baseline_window)
-#         m1, s1 = _mean_sem(data1)
-#         ax.fill_between(xaxis, m1 - s1, m1 + s1,
-#                         facecolor=colors[0], alpha=sem_alpha, edgecolor='none', zorder=1)
-#         ax.plot(xaxis, m1, color=colors[0], lw=lw, zorder=3, label=labels[0])
-#     else:
-#         m1 = None
-
-#     # --- plot data2 ---
-#     if data2 is not None:
-#         data2 = _as_2d(data2)
-#         data2 = _baseline_correct(data2, xaxis, baseline_window)
-#         m2, s2 = _mean_sem(data2)
-
-#         # offset relative to data1 if available
-#         if (data1 is not None) and (center_mode is not None):
-#             c1 = _center_value(m1, center_mode)
-#             c2 = _center_value(m2, center_mode)
-#             offset2 = c1 - c2
-#         else:
-#             offset2 = 0.0
-
-#         ax.fill_between(xaxis, (m2 + offset2) - s2, (m2 + offset2) + s2,
-#                         facecolor=colors[1], alpha=sem_alpha, edgecolor='none', zorder=2)
-#         ax.plot(xaxis, m2 + offset2, color=colors[1], lw=lw, zorder=4, label=labels[1])
-
-#     # --- vertical event line ---
-#     if vline and (np.nanmin(xaxis) <= vline_t <= np.nanmax(xaxis)):
-#         vk = dict(color='grey', ls='--', lw=1.0, zorder=4.7)
-#         if isinstance(vline_kwargs, dict):
-#             vk.update(vline_kwargs)
-#         ax.axvline(vline_t, **vk)
-
-#     # --- axes styling ---
-#     # Hide y-axis; conditionally keep x-axis
-#     ax.set_yticks([])
-#     ax.tick_params(axis='y', left=False, labelleft=False)
-
-#     if show_xaxis:
-#         # Keep bottom spine only
-#         for name, sp in ax.spines.items():
-#             sp.set_visible(name == 'bottom')
-#         # Configure x ticks/labels
-#         if x_tick_params is None:
-#             x_tick_params = dict(length=3, pad=2, labelsize=8, direction='out')
-#         ax.tick_params(axis='x', bottom=True, labelbottom=True, **x_tick_params)
-
-#         if x_tick_step is not None:
-#             lo, hi = np.min(xaxis), np.max(xaxis)
-#             start = np.floor(lo / x_tick_step) * x_tick_step
-#             stop  = np.ceil(hi / x_tick_step) * x_tick_step
-#             ticks = np.arange(start, stop + 0.5 * x_tick_step, x_tick_step)
-#             ax.set_xticks(ticks)
-
-#         if xlabel is not None:
-#             ax.set_xlabel(xlabel)
-#         else:
-#             ax.set_xlabel("")
-#     else:
-#         # Minimalist, no axes visible
-#         ax.set_xticks([])
-#         for sp in ax.spines.values():
-#             sp.set_visible(False)
-#         ax.set_xlabel("")
-
-#     ax.margins(x=0.02)
-
-#     # --- small scale bars (always drawn) ---
-#     xlim = ax.get_xlim(); ylim = ax.get_ylim()
-#     xspan = xlim[1] - xlim[0]; yspan = ylim[1] - ylim[0]
-#     xpad = bar_pad_frac[0] * xspan
-#     ypad = bar_pad_frac[1] * yspan
-
-#     # bump the bar upward a bit if the x-axis is visible
-#     bump = (bar_y_bump_frac if show_xaxis else 0.0) * yspan
-
-#     x0 = (xlim[1] - xpad - timebar) if bar_side.lower().startswith("r") else (xlim[0] + xpad)
-#     y0 = ylim[0] + ypad + bump
-
-#     ax.plot([x0, x0 + timebar], [y0, y0], color="black", lw=1.2, zorder=5, clip_on=False)
-#     ax.plot([x0 + timebar, x0 + timebar], [y0, y0 + dffbar], color="black", lw=1.2, zorder=5, clip_on=False)
-#     ax.text(x0 + timebar/2, y0 - 0.02*yspan, f"{timebar:g} {time_label}",
-#             ha="center", va="top", fontsize=8, clip_on=False)
-#     ax.text(x0 + timebar + 0.01*xspan, y0 + dffbar/2, f"{dffbar:g}% {dff_label}",
-#             ha="left", va="center", fontsize=8, rotation=90, clip_on=False)
-
-#     fig.tight_layout()
-#     return fig, ax
 
 def plot_two_traces_with_scalebars(
     data1, data2, xaxis, ax=None,
@@ -1058,8 +965,23 @@ def plot_two_traces_with_scalebars_fixbar(
     
     # calculate ylim_min based on ch2 signal limits
     if ylims is None:
-        ch2_ylim_min = np.nanmin((m2 + offset2) - s2_sem)-0.15
-        ylims=(ch2_ylim_min, ch2_ylim_min+2)
+        ch1_low = np.nanmin(m1 - s1_sem) - 0.15
+        ch2_low = np.nanmin(m2 + offset2 - s2_sem) - 0.15
+        
+        # per-trace upper envelopes (mean + sem)
+        ch1_high = np.nanmax(m1 + s1_sem) + 0.15
+        ch2_high = np.nanmax(m2 + offset2 + s2_sem) + 0.15
+        
+        ylim_min = np.nanmin([ch1_low, ch2_low])
+        ylim_max = np.nanmax([ch1_high, ch2_high])
+        
+        # optional extra bottom room when x-axis is shown
+        if show_xaxis:
+            yspan0 = ylim_max - ylim_min
+            ylim_min = ylim_min - 0.08 * yspan0   # tune 0.05–0.15
+        
+        ylims = (ylim_min, ylim_min+5)
+
     ax.set_ylim(ylims)
     # --- small scale bars (time + one or two dF/F bars) ---
     xlim = ax.get_xlim(); ylim = ax.get_ylim()
@@ -1100,7 +1022,7 @@ def plot_two_traces_with_scalebars_fixbar(
     # determine bar heights and labels
     def _fmt_bar(v):
         try:
-            return f"{v:g}% {dff_label}"
+            return f"{v:g} {dff_label}"
         except Exception:
             return f"{v} {dff_label}"
 
@@ -1249,25 +1171,24 @@ def plot_two_traces_with_scalebars_fixbar(
 
 #     fig.tight_layout()
 #     return fig, ax
-def plot_paired_violin(list1, list2, 
-                       colors=['steelblue', 'orange'], 
-                       colname=None, ylabel=None, ylim=None, 
+
+def plot_paired_violin(list1, list2,
+                       colors=('steelblue', 'orange'),
+                       m_point = 'mean',
+                       colname=None, ylabel=None, ylim=None,
                        title_prefix=None,
                        show_pair_lines=True,
                        ax=None,
-                       markersize=3):
+                       markersize=3,
+                       fs=10,
+                       pos1=0.5, pos2=0.8,
+                       width=0.2,
+                       dx=0.02):
     """
-    Plot paired violin plots comparing two matched 1D lists.
-
-    Parameters:
-        list1 (array-like): shape (n,), first condition
-        list2 (array-like): shape (n,), second condition  
-        colors (list): Colors for the two violins.
-        colname (str or list of str): Used for x-axis labels and plot title.
-        ylabel (str): Label for y-axis.
-        ylim (tuple): Y-axis limits.
-        title_prefix (str): Optional prefix for the plot title.
-        show_pair_lines (bool): If True, draw lines connecting paired points.
+    Two separated half violins:
+      - list1: left half at x=pos0
+      - list2: right half at x=pos1
+    Plus paired points and optional connecting lines.
     """
     import numpy as np
     import matplotlib.pyplot as plt
@@ -1275,58 +1196,94 @@ def plot_paired_violin(list1, list2,
 
     list1 = np.asarray(list1, dtype=float)
     list2 = np.asarray(list2, dtype=float)
-
     if list1.shape != list2.shape:
         raise ValueError("For paired data, list1 and list2 must have the same shape.")
 
-    # Drop NaN pairs (keep only pairs where both are finite)
     mask = np.isfinite(list1) & np.isfinite(list2)
     list1 = list1[mask]
     list2 = list2[mask]
-    
+
+    created_fig = False
     if ax is None:
-        fig, ax = plt.subplots(figsize=(3, 3), dpi=200)
+        fig, ax = plt.subplots(figsize=(2.5, 2.5), dpi=200)
+        created_fig = True
 
-    data = [list1, list2]
-    positions = [1, 2]
+    def _clip_violin_body(body, center, side):
+        path = body.get_paths()[0]
+        verts = path.vertices
+        if side == "right":
+            verts[:, 0] = np.maximum(verts[:, 0], center)
+        elif side == "left":
+            verts[:, 0] = np.minimum(verts[:, 0], center)
+        else:
+            raise ValueError("side must be 'right' or 'left'")
+        path.vertices = verts
 
-    # Full violin plots (not half)
-    vp = ax.violinplot(data, positions=positions, showextrema=False)
+    # --- draw separated half violins ---
+    vp1 = ax.violinplot([list1], positions=[pos1], widths=width, showextrema=False)
+    _clip_violin_body(vp1["bodies"][0], pos1, "left")
+    vp1["bodies"][0].set_facecolor(colors[0])
+    vp1["bodies"][0].set_edgecolor("none")
+    vp1["bodies"][0].set_alpha(0.7)
 
-    # Color the violins
-    for i, body in enumerate(vp['bodies']):
-        body.set_color(colors[i])
-        body.set_edgecolor('none')
-        body.set_alpha(0.7)
+    vp2 = ax.violinplot([list2], positions=[pos2], widths=width, showextrema=False)
+    _clip_violin_body(vp2["bodies"][0], pos2, "right")
+    vp2["bodies"][0].set_facecolor(colors[1])
+    vp2["bodies"][0].set_edgecolor("none")
+    vp2["bodies"][0].set_alpha(0.7)
 
-    x1, x2 = positions
+    # --- points + paired lines ---
+    # Place points slightly toward the open side of each half violin
+    x1 = pos1 + dx   # list1 is left-half -> open side is to the right
+    x2 = pos2 - dx   # list2 is right-half -> open side is to the left
 
-    # Add individual data points
-    ax.plot([x1] * len(list1), list1, 'o', color=colors[0], alpha=0.4, markersize=markersize, zorder=3)
-    ax.plot([x2] * len(list2), list2, 'o', color=colors[1], alpha=0.4, markersize=markersize, zorder=3)
+    # ax.plot(np.full(len(list1), x1), list1, 'o',
+    #         color=colors[0], alpha=0.4, markersize=markersize,
+    #         markeredgecolor='none', markeredgewidth=0, zorder=3
+    #         )
+    # ax.plot(np.full(len(list2), x2), list2, 'o',
+    #         color=colors[1], alpha=0.4, markersize=markersize,
+    #         markeredgecolor='none', markeredgewidth=0, zorder=3)
 
-    # Lines connecting paired points
     if show_pair_lines:
         for y1, y2 in zip(list1, list2):
-            ax.plot([x1, x2], [y1, y2], color='0.6', alpha=0.4, linewidth=0.8, zorder=2)
+            ax.plot([x1, x2], [y1, y2],
+                    color='0.6', alpha=0.4, linewidth=0.8, zorder=2)
 
-    # Median markers
-    ax.scatter(x1, np.mean(list1), s=30, c=colors[0], alpha=.8, zorder=4)
-    ax.scatter(x2, np.mean(list2), s=30, c=colors[1], alpha=.8, zorder=4)
+    # mean markers (swap to median if desired)
+    if m_point == 'mean':
+        m1 = np.mean(list1)
+        m2 = np.mean(list2)
+    elif m_point == 'median':
+        m1 = np.median(list1)
+        m2 = np.median(list2)
+        
+    ax.scatter([x1], [m1], s=30, c=[colors[0]], edgecolor=None,
+               alpha=1, zorder=4)
+    ax.scatter([x2], [m2], s=30, c=[colors[1]], edgecolor=None,
+               alpha=1, zorder=4)
+    ax.plot([x1, x2], [m1, m2],
+            color='k', alpha=.8, linewidth=2, zorder=2)
+    ax.plot([pos1-dx, x1], [m1, m1],
+            color='k', alpha=.8, linewidth=2, zorder=2)
+    ax.plot([pos2+dx, x2], [m2, m2],
+            color='k', alpha=.8, linewidth=2, zorder=2)
 
-    ax.set_xlim(0.5, 2.5)
+    # --- axes cosmetics ---
+    pad = 0.3
+    ax.set_xlim(min(pos1, pos2) - pad, max(pos1, pos2) + pad)
 
-    # X labels and title text base
-    if isinstance(colname, list) and len(colname) == 2:
-        ax.set_xticks(positions)
-        ax.set_xticklabels(colname)
+    # x ticks / labels
+    if isinstance(colname, (list, tuple)) and len(colname) == 2:
+        ax.set_xticks([pos1, pos2])
+        ax.set_xticklabels([colname[0], colname[1]])
         plot_title = f"{colname[0]} vs {colname[1]}"
     elif colname:
-        ax.set_xticks(positions)
+        ax.set_xticks([pos1, pos2])
         ax.set_xticklabels(['Cond 1', 'Cond 2'])
         plot_title = str(colname)
     else:
-        ax.set_xticks(positions)
+        ax.set_xticks([pos1, pos2])
         ax.set_xticklabels(['Cond 1', 'Cond 2'])
         plot_title = "Paired Comparison"
 
@@ -1335,41 +1292,177 @@ def plot_paired_violin(list1, list2,
     if ylim:
         ax.set_ylim(ylim)
 
-    # Paired statistical tests
+    # --- stats ---
     t_stat, t_pval = ttest_rel(list1, list2)
-
     try:
         w_stat, w_pval = wilcoxon(list1, list2)
     except ValueError:
-        # e.g. all differences are zero -> Wilcoxon not defined
-        w_stat, w_pval = np.nan, np.nan
+        w_pval = np.nan
 
-    # Title with stats
-    if np.isnan(w_pval):
-        stat_str = f"t-rel p={t_pval:.4g}, Wilcoxon p=nan"
-    else:
-        stat_str = f"t-rel p={t_pval:.4g}, Wilcoxon p={w_pval:.4g}"
+    stat_str = f"t-rel p={t_pval:.4g}, Wilcoxon p={'nan' if np.isnan(w_pval) else f'{w_pval:.4g}'}"
+    title = f"{plot_title}\n{stat_str}" if not title_prefix else f"{title_prefix}: {plot_title}\n{stat_str}"
+    ax.set_title(title, fontsize=fs)
 
-    if title_prefix:
-        title = f"{title_prefix}: {plot_title}\n{stat_str}"
-    else:
-        title = f"{plot_title}\n{stat_str}"
-
-    ax.set_title(title, fontsize=10)
-
-    # Sample size (number of pairs)
+    # sample size
     n_pairs = len(list1)
-    ax.text(x1, ax.get_ylim()[0], f'n={n_pairs}', ha='center', va='top', fontsize=8)
-    ax.text(x2, ax.get_ylim()[0], f'n={n_pairs}', ha='center', va='top', fontsize=8)
+    y0 = ax.get_ylim()[0]
+    ax.text(pos1, y0, f"n={n_pairs}", ha="center", va="top", fontsize=fs-2)
+    ax.text(pos2, y0, f"n={n_pairs}", ha="center", va="top", fontsize=fs-2)
 
-    # Clean up spines
     for spine in ['top', 'right', 'bottom']:
         ax.spines[spine].set_visible(False)
-    # plt.show()
-    if ax is None:
-        return fig, ax
 
-def plot_unpaired_violin(list1, list2, colors=['steelblue', 'orange'], 
+    if created_fig:
+        return fig, ax
+    return ax
+
+
+
+# def plot_paired_violin(list1, list2, 
+#                        colors=['steelblue', 'orange'], 
+#                        colname=None, ylabel=None, ylim=None, 
+#                        title_prefix=None,
+#                        show_pair_lines=True,
+#                        ax=None,
+#                        markersize=3):
+#     """
+#     Plot paired violin plots comparing two matched 1D lists.
+
+#     Parameters:
+#         list1 (array-like): shape (n,), first condition
+#         list2 (array-like): shape (n,), second condition  
+#         colors (list): Colors for the two violins.
+#         colname (str or list of str): Used for x-axis labels and plot title.
+#         ylabel (str): Label for y-axis.
+#         ylim (tuple): Y-axis limits.
+#         title_prefix (str): Optional prefix for the plot title.
+#         show_pair_lines (bool): If True, draw lines connecting paired points.
+#     """
+#     import numpy as np
+#     import matplotlib.pyplot as plt
+#     from scipy.stats import ttest_rel, wilcoxon
+
+#     list1 = np.asarray(list1, dtype=float)
+#     list2 = np.asarray(list2, dtype=float)
+
+#     if list1.shape != list2.shape:
+#         raise ValueError("For paired data, list1 and list2 must have the same shape.")
+
+#     # Drop NaN pairs (keep only pairs where both are finite)
+#     mask = np.isfinite(list1) & np.isfinite(list2)
+#     list1 = list1[mask]
+#     list2 = list2[mask]
+    
+#     # Drop NaN pairs (keep only pairs where both are finite)
+#     mask = np.isfinite(list1) & np.isfinite(list2)
+#     list1 = list1[mask]
+#     list2 = list2[mask]
+    
+#     if ax is None:
+#         fig, ax = plt.subplots(figsize=(3, 3), dpi=200)
+    
+#     pos = 1.0  # shared center position for split violin
+#     width = 0.8
+    
+#     def _clip_violin_body(body, pos, side):
+#         path = body.get_paths()[0]
+#         verts = path.vertices
+#         if side == "right":
+#             verts[:, 0] = np.maximum(verts[:, 0], pos)
+#         elif side == "left":
+#             verts[:, 0] = np.minimum(verts[:, 0], pos)
+#         else:
+#             raise ValueError("side must be 'right' or 'left'")
+#         path.vertices = verts
+    
+#     # left half: list1
+#     vp1 = ax.violinplot([list1], positions=[pos], widths=width, showextrema=False)
+#     _clip_violin_body(vp1["bodies"][0], pos, "left")
+    
+#     # right half: list2
+#     vp2 = ax.violinplot([list2], positions=[pos], widths=width, showextrema=False)
+#     _clip_violin_body(vp2["bodies"][0], pos, "right")
+
+
+#     # Color the violins
+#     for i, body in enumerate(vp['bodies']):
+#         body.set_color(colors[i])
+#         body.set_edgecolor('none')
+#         body.set_alpha(0.7)
+
+#     x1, x2 = positions
+
+#     # Add individual data points
+#     ax.plot([x1] * len(list1), list1, 'o', color=colors[0], alpha=0.4, markersize=markersize, zorder=3)
+#     ax.plot([x2] * len(list2), list2, 'o', color=colors[1], alpha=0.4, markersize=markersize, zorder=3)
+
+#     # Lines connecting paired points
+#     if show_pair_lines:
+#         for y1, y2 in zip(list1, list2):
+#             ax.plot([x1, x2], [y1, y2], color='0.6', alpha=0.4, linewidth=0.8, zorder=2)
+
+#     # Median markers
+#     ax.scatter(x1, np.mean(list1), s=30, c=colors[0], alpha=.8, zorder=4)
+#     ax.scatter(x2, np.mean(list2), s=30, c=colors[1], alpha=.8, zorder=4)
+
+#     ax.set_xlim(0.5, 2.5)
+
+#     # X labels and title text base
+#     if isinstance(colname, list) and len(colname) == 2:
+#         ax.set_xticks(positions)
+#         ax.set_xticklabels(colname)
+#         plot_title = f"{colname[0]} vs {colname[1]}"
+#     elif colname:
+#         ax.set_xticks(positions)
+#         ax.set_xticklabels(['Cond 1', 'Cond 2'])
+#         plot_title = str(colname)
+#     else:
+#         ax.set_xticks(positions)
+#         ax.set_xticklabels(['Cond 1', 'Cond 2'])
+#         plot_title = "Paired Comparison"
+
+#     if ylabel:
+#         ax.set_ylabel(ylabel)
+#     if ylim:
+#         ax.set_ylim(ylim)
+
+#     # Paired statistical tests
+#     t_stat, t_pval = ttest_rel(list1, list2)
+
+#     try:
+#         w_stat, w_pval = wilcoxon(list1, list2)
+#     except ValueError:
+#         # e.g. all differences are zero -> Wilcoxon not defined
+#         w_stat, w_pval = np.nan, np.nan
+
+#     # Title with stats
+#     if np.isnan(w_pval):
+#         stat_str = f"t-rel p={t_pval:.4g}, Wilcoxon p=nan"
+#     else:
+#         stat_str = f"t-rel p={t_pval:.4g}, Wilcoxon p={w_pval:.4g}"
+
+#     if title_prefix:
+#         title = f"{title_prefix}: {plot_title}\n{stat_str}"
+#     else:
+#         title = f"{plot_title}\n{stat_str}"
+
+#     ax.set_title(title, fontsize=10)
+
+#     # Sample size (number of pairs)
+#     n_pairs = len(list1)
+#     ax.text(x1, ax.get_ylim()[0], f'n={n_pairs}', ha='center', va='top', fontsize=8)
+#     ax.text(x2, ax.get_ylim()[0], f'n={n_pairs}', ha='center', va='top', fontsize=8)
+
+#     # Clean up spines
+#     for spine in ['top', 'right', 'bottom']:
+#         ax.spines[spine].set_visible(False)
+#     # plt.show()
+#     if ax is None:
+#         return fig, ax
+
+def plot_unpaired_violin(list1, list2, 
+                         m_point='mean',
+                         colors=['steelblue', 'orange'], 
                          colname=None, ylabel=None, ylim=None, 
                          title_prefix=None,
                          ax=None,
@@ -1385,13 +1478,15 @@ def plot_unpaired_violin(list1, list2, colors=['steelblue', 'orange'],
         ylim (tuple): Y-axis limits.
         title_prefix (str): Optional prefix for the plot title.
     """
-    from scipy.stats import ttest_ind, ranksums
+    # from scipy.stats import ttest_ind, ranksums
     
     list1 = np.asarray(list1)
     list2 = np.asarray(list2)
     
+    return_ax = False
     if ax is None:
         fig, ax = plt.subplots(figsize=(3, 3), dpi=200)
+        return_ax = True
     
     data = [list1, list2]
     positions = [1, 2]
@@ -1409,9 +1504,16 @@ def plot_unpaired_violin(list1, list2, colors=['steelblue', 'orange'],
     ax.plot([x1]*len(list1), list1, 'o', color=colors[0], alpha=0.3, markersize=markersize)
     ax.plot([x2]*len(list2), list2, 'o', color=colors[1], alpha=0.3, markersize=markersize)
     
-    # Add median markers (matching paired style)
-    ax.scatter(x1, np.median(list1), s=30, c=colors[0], alpha=.6, zorder=3)
-    ax.scatter(x2, np.median(list2), s=30, c=colors[1], alpha=.6, zorder=3)
+    # Add m markers (matching paired style)
+    if m_point == 'mean':
+        m1 = np.mean(list1)
+        m2 = np.mean(list2)
+    elif m_point == 'median':
+        m1 = np.median(list1)
+        m2 = np.median(list2)
+    
+    ax.scatter(x1, m1, s=30, c=colors[0], alpha=.6, zorder=3)
+    ax.scatter(x2, m2, s=30, c=colors[1], alpha=.6, zorder=3)
     
     ax.set_xlim(0.5, 2.5)
     if isinstance(colname, list) and len(colname) == 2:
@@ -1451,7 +1553,7 @@ def plot_unpaired_violin(list1, list2, colors=['steelblue', 'orange'],
         ax.spines[spine].set_visible(False)
         
     # plt.show()
-    if ax is None:
+    if return_ax:
         return fig, ax
 
 def plot_unpaired_boxplot(list1, list2, colors=['steelblue', 'orange'],
@@ -1563,6 +1665,7 @@ def plot_unpaired_boxplot(list1, list2, colors=['steelblue', 'orange'],
     fig.tight_layout()
     # plt.show()
     return fig, ax
+
 # def plot_overlay_1bar(list1, list2,
 #                      colname=['list1', 'list2'],
 #                      colors=('steelblue', 'orange'),

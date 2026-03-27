@@ -41,7 +41,8 @@ from tqdm import tqdm
 if (r"Z:\Jingyu\code_mpfi_Jingyu\drug_infusion" in sys.path) == False:
     sys.path.append(r"Z:\Jingyu\code_mpfi_Jingyu\drug_infusion")
 from rec_lst_infusion import rec_lst_infusion
-
+from common.utils_basic import zero_padding
+from common.trial_selection import select_good_trials
 # =============================================================================
 # Constants
 # =============================================================================
@@ -90,11 +91,15 @@ def update_session_info(df_session_info, rec, exp='GCaMP8s_infusion'):
         df_session_info = pd.DataFrame(columns=[
             'anm', 'date', 'session', 'label', 'conc', 'latency',
             'valid_trials_ss1', 'valid_trials_ss2', 'valid_trials_ss3',
+            'lick_idx_ss1', 'lick_idx_ss2', 'lick_idx_ss3',
+            'max_speed_median_ss1', 'max_speed_median_ss2', 'max_speed_median_ss3',
+            'full_trial_len_median_ss1', 'full_trial_len_median_ss2', 'full_trial_len_median_ss3',
             'good_trials_ss1', 'good_trials_ss2', 'good_trials_ss3',
             'bad_trials_ss1', 'bad_trials_ss2', 'bad_trials_ss3',
             'n_valid_trials_ss1', 'n_valid_trials_ss2', 'n_valid_trials_ss3',
             'perc_valid_trials_ss1', 'perc_valid_trials_ss2', 'perc_valid_trials_ss3',
             'n_good_trials_ss1', 'n_good_trials_ss2', 'n_good_trials_ss3',
+            'perc_good_trials_ss1', 'perc_good_trials_ss2', 'perc_good_trials_ss3',
             'n_bad_trials_ss1', 'n_bad_trials_ss2', 'n_bad_trials_ss3'
         ])
 
@@ -147,10 +152,66 @@ def update_session_info(df_session_info, rec, exp='GCaMP8s_infusion'):
             (np.array(beh['non_stop_trials']) == 0) &
             (np.array(beh['non_fullstop_trials']) == 0)
         )
-
+        
+        # select good trials
+        # good_tr_param = dict(
+        #     STOP_TH=10.0,          # cm/s, minimum speed to be considered as running
+        #     MAX_STOP_FRAC=0.3,     # fraction of trial (0-1)
+        #     MIN_MAX_SPEED=55,    # cm/s
+        #     MIN_FL_TIME=1.0,       # s
+        #     MAX_DUR=8,             # s, max trial length, if none then use 2*MAD filter
+        #     ITI_MAX=3,           # s
+        #     NORM_T=100,            # bins for time normalization
+        #     fs=1000,               # Hz
+        #     template_filter=False,
+        #     MIN_TEMP_CORR=.75,
+        #     template_drop_pct=20,  # drop worst X% by correlation
+        #     return_reason = 0
+        # )
+        good_trials = select_good_trials(beh,
+                                         STOP_TH=10.0,          # cm/s, minimum speed to be considered as running
+                                         MAX_STOP_FRAC=0.3,     # fraction of trial (0-1)
+                                         MIN_MAX_SPEED=55,    # cm/s
+                                         MIN_FL_TIME=1.0,       # s
+                                         MAX_DUR=8,             # s, max trial length, if none then use 2*MAD filter
+                                         ITI_MAX=3,           # s
+                                         NORM_T=100,            # bins for time normalization
+                                         fs=1000,               # Hz
+                                         template_filter=False,
+                                         MIN_TEMP_CORR=.75,
+                                         template_drop_pct=20,  # drop worst X% by correlation
+                                         return_reason = 0)
+        # lick index mean
+        lick_idx = np.nanmean(beh['lick_selectivities'])
+        # max speed
+        smp_rate = 1000
+        max_len = 6 * smp_rate
+        speed_time = [zero_padding(np.vstack(tr_speed)[:, 1], max_len) if len(tr_speed) > 0 else np.full(max_len, np.nan)
+                      for tr_speed in beh['speed_times_aligned']
+                    ]
+        speed_time = np.vstack(speed_time)
+        # trial length
+        full_trial_len = [np.nan] # run_onset to run_onset
+        for t in range(1, len(beh['speed_times_aligned'])-1):
+            if len(beh['speed_times_aligned'][t])>0 and len(beh['speed_times_aligned'][t+1])>0:
+                full_trial_len.append(beh['speed_times_aligned'][t+1][0][0]-beh['speed_times_aligned'][t][0][0])
+            else:
+                full_trial_len.append(np.nan)
+        full_trial_len.append(np.nan)
+        full_trial_len_median = np.nanmedian(full_trial_len)
+        
+        max_speed_all = np.nanpercentile(speed_time, 99, axis=-1)
+        max_speed_median = np.nanmedian(max_speed_all)
         row_data[f'valid_trials_{sess_key}'] = valid_trials
         row_data[f'n_valid_trials_{sess_key}'] = np.sum(valid_trials)
         row_data[f'perc_valid_trials_{sess_key}'] = np.sum(valid_trials) / n_trials
+        row_data[f'good_trials_{sess_key}'] = good_trials
+        row_data[f'n_good_trials_{sess_key}'] = np.sum(good_trials)
+        row_data[f'perc_good_trials_{sess_key}'] = np.sum(good_trials) / n_trials
+        row_data[f'lick_idx_{sess_key}'] = lick_idx
+        row_data[f'max_speed_median_{sess_key}'] = max_speed_median
+        row_data[f'full_trial_len_median_{sess_key}'] = full_trial_len_median
+
 
     # Add the complete row to DataFrame
     df_session_info.loc[row_idx] = row_data
@@ -163,7 +224,7 @@ if __name__ == "__main__":
     output_file = os.path.join(OUTPUT_DIR, 'infusion_session_info.parquet')
 
     # Load existing data or start fresh
-    if os.path.exists(output_file):
+    if os.path.exists(os.path.join(OUTPUT_DIR, 'infusion_session_info_new.parquet')):
         df_session_info = pd.read_parquet(output_file)
         print(f"Loaded existing session info with {len(df_session_info)} records")
     else:
@@ -177,3 +238,5 @@ if __name__ == "__main__":
     # Save updated table
     df_session_info.to_parquet(output_file)
     print(f"Saved {len(df_session_info)} sessions to {output_file}")
+    
+

@@ -10,12 +10,14 @@ import os
 import numpy as np
 import tifffile
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 from skimage.filters import threshold_local
 from skimage.measure import regionprops
 from skimage.morphology import remove_small_objects, remove_small_holes
 # from skimage.measure import regionprops
 import cv2
 from scipy.ndimage import gaussian_filter, uniform_filter, minimum_filter, binary_dilation
+from common.plotting_functions_Jingyu import save_fig
 
 def load_axon_mask(p_masks):
     p_fiber_mask = p_masks / r'ch2_FOV.npy_ROI_dict_selected.npy'
@@ -27,12 +29,30 @@ def load_axon_mask(p_masks):
             axon_mask[r['ypix'], r['xpix']]=True
     return axon_mask
 
-def save_mask(mask, output_dir, filebase):
+def save_mask(mask, output_dir, filebase, save_tif=True):
     output_dir.mkdir(parents=True, exist_ok=True)
     # Save as an 8-bit TIFF (0 for False, 255 for True), common for image viewers
-    tifffile.imwrite(output_dir / f'{filebase}.tiff', mask.astype('uint8') * 255)
+    if save_tif:
+        tifffile.imwrite(output_dir / f'{filebase}.tiff', mask.astype('uint8') * 255)
     # Save as a NumPy binary file, preserving the boolean or integer type
     np.save(output_dir / f'{filebase}.npy', mask)
+
+def split_map_to_grids_full(map2d, n_y, n_x):
+    h, w = map2d.shape
+
+    # grid boundaries
+    y_edges = np.linspace(0, h, n_y + 1, dtype=int)
+    x_edges = np.linspace(0, w, n_x + 1, dtype=int)
+
+    out = np.zeros((n_y, n_x, h, w), dtype=map2d.dtype)
+
+    for gy in range(n_y):
+        for gx in range(n_x):
+            y0, y1 = y_edges[gy], y_edges[gy + 1]
+            x0, x1 = x_edges[gx], x_edges[gx + 1]
+            out[gy, gx, y0:y1, x0:x1] = map2d[y0:y1, x0:x1]
+
+    return out
        
 def generate_adaptive_membrane_mask(
     mean_img,
@@ -48,6 +68,8 @@ def generate_adaptive_membrane_mask(
     z_tau=3.8,                    # local z-score cut for neuropil
     min_region_size=150,
     hole_size_threshold=150,
+    # plot process
+    visualize = 1
 ):
     """
     Improved neuropil handling:
@@ -105,31 +127,32 @@ def generate_adaptive_membrane_mask(
                  cell_like=cell_like, z=z,
                  cell_membrane_mask=cell_membrane_mask, neuropil_mask=neuropil_mask)
     
-    # if show:
-    neuropil_mask = neuropil_like.astype(bool)
-    neuropil_zmap = debug['z']
-    neuropil_zmap[~neuropil_mask] = np.nan
-    fig, ax = plt.subplots(2, 3, figsize=(12, 8))
-    ax[0,0].imshow(img, cmap='gray'); ax[0,0].set_title('Original'); ax[0,0].axis('off')
-    ax[0,1].imshow(uniformity, cmap='magma'); ax[0,1].set_title('uniformity'); ax[0,1].axis('off')
-    ax[0,2].imshow(neuropil_like, cmap='coolwarm'); ax[0,2].set_title('Neuropil-like'); ax[0,2].axis('off')
-    ax[1,0].imshow(cell_membrane_mask, cmap='gray'); ax[1,0].set_title('Cell membranes'); ax[1,0].axis('off')
-    ax[1,1].imshow(neuropil_zmap, cmap='viridis', vmax=np.nanpercentile(neuropil_zmap, 99));ax[1,1].set_title('Neuropil_Z_map'); ax[1,1].axis('off')
-    ax[1,2].imshow(img, cmap='gray'); ax[1,2].imshow(final_mask, alpha=0.35, cmap='Reds')
-    ax[1,2].set_title('Final'); ax[1,2].axis('off')
-    plt.tight_layout()
+    if visualize:
+        neuropil_mask = neuropil_like.astype(bool)
+        neuropil_zmap = debug['z']
+        neuropil_zmap[~neuropil_mask] = np.nan
+        fig, ax = plt.subplots(2, 3, figsize=(12, 8))
+        ax[0,0].imshow(img, cmap='gray'); ax[0,0].set_title('Original'); ax[0,0].axis('off')
+        ax[0,1].imshow(uniformity, cmap='magma'); ax[0,1].set_title('uniformity'); ax[0,1].axis('off')
+        ax[0,2].imshow(neuropil_like, cmap='coolwarm'); ax[0,2].set_title('Neuropil-like'); ax[0,2].axis('off')
+        ax[1,0].imshow(cell_membrane_mask, cmap='gray'); ax[1,0].set_title('Cell membranes'); ax[1,0].axis('off')
+        ax[1,1].imshow(neuropil_zmap, cmap='viridis', vmax=np.nanpercentile(neuropil_zmap, 99));ax[1,1].set_title('Neuropil_Z_map'); ax[1,1].axis('off')
+        ax[1,2].imshow(img, cmap='gray'); ax[1,2].imshow(final_mask, alpha=0.35, cmap='Reds')
+        ax[1,2].set_title('Final'); ax[1,2].axis('off')
+        plt.tight_layout()
         # plt.show()
-    return base_mask, final_mask, fig
-
+        return base_mask, final_mask, fig
+    
+    else:
+        return final_mask
 
 # Helper function to overlay grid lines
-def overlay_grid(ax, shape, grid_size):
+def overlay_grid(ax, shape, grid_size, color='white'):
     h, w = shape
     for i in range(0, h, grid_size):
-        ax.axhline(i, color='white', linewidth=0.5, alpha=0.3)
+        ax.axhline(i, color=color, linewidth=0.5, alpha=0.3)
     for j in range(0, w, grid_size):
-        ax.axvline(j, color='white', linewidth=0.5, alpha=0.3)
-
+        ax.axvline(j, color=color, linewidth=0.5, alpha=0.3)
 
 def axon_mask_dilation(global_axon_mask, global_dlight_mask, ref_img,
                        dilation_steps,
@@ -267,6 +290,147 @@ def axon_mask_dilation(global_axon_mask, global_dlight_mask, ref_img,
     plt.savefig(output_dir / 'axon_dilation_review.png', dpi=300, bbox_inches='tight')
     plt.close()
     
+def axon_mask_dilation_grid_free(global_axon_mask, global_dlight_mask, ref_img,
+                       dilation_steps,
+                       method='binary',
+                       output_dir=None,
+                       constrain_to_grid=False,
+                       grid_size=16,
+                       visualize=False,
+                       fig_out=None):
+    
+    h, w = global_axon_mask.shape
+    n_y = (h + grid_size - 1) // grid_size
+    n_x = (w + grid_size - 1) // grid_size
+    
+    if visualize:
+        fig, axs = plt.subplots(1, len(dilation_steps), 
+                                figsize=(4*len(dilation_steps), 4), 
+                                squeeze=False, dpi=150)
+        axs = axs[0]  # flatten for easier indexing
+        fig.suptitle('grid_free_dilation_review', size=7)
+
+    if method == 'binary':
+        dilated_masks_last = split_map_to_grids_full(global_axon_mask, n_y, n_x)
+        for i, k_size in enumerate(dilation_steps):
+            dilated_masks = np.zeros((n_y, n_x, h, w), dtype=bool)
+            if k_size == 0:
+                # dilated_roi_last = global_axon_mask
+                # ax = axs[0]
+                # ax.imshow(ref_img,
+                #           vmin = np.percentile(ref_img, 1),
+                #           vmax = np.percentile(ref_img, 98),
+                #           cmap='gray')
+                # ax.imshow(np.where(global_axon_mask>0, 1 , np.nan),
+                #           interpolation='none',
+                #           cmap='Set1', alpha=0.5)
+                # if constrain_to_grid:
+                #     overlay_grid(ax, global_axon_mask.shape, grid_size)
+                # ax.set(title='original')
+                # ax.axis("off")
+                
+                # save masks
+                global_axon_mask_split = split_map_to_grids_full(global_axon_mask, n_y, n_x)
+                save_mask(global_axon_mask_split, output_dir, 
+                          filebase=f'dilated_global_axon_k={k_size}',
+                          save_tif=False)
+                continue
+            # Dilate each grid block independently
+            n = 0
+            for by, ii in enumerate(range(0, h, grid_size)):          # by = block index (y)
+                for bx, jj in enumerate(range(0, w, grid_size)):      # bx = block index (x)
+                    grid_map = np.zeros_like(global_axon_mask, dtype=bool)
+                    grid_map[ii:min(ii+grid_size, h), jj:min(jj+grid_size, w)] = True
+                    grid_fiber_map = global_axon_mask & grid_map
+                    if grid_fiber_map.any():
+                        dilated_block = binary_dilation(grid_fiber_map, iterations=k_size).astype('bool')
+                        dilated_block_last = dilated_masks_last[by, bx, :, :] 
+                        dilated_only = (dilated_block)&(~dilated_block_last)&(~global_axon_mask)
+                        dilated_masks_last[by, bx, :, :] = dilated_block
+                        
+                        if constrain_to_grid:
+                            dilated_masks[by, bx, :, :]= dilated_only&(grid_map)
+                        else:
+                            dilated_masks[by, bx, :, :] = dilated_only
+                            n += 1
+                            if visualize and (n < 2):
+                                y0 = max(ii - grid_size, 0)
+                                y1 = min(ii + 2 * grid_size, h)
+                                x0 = max(jj - grid_size, 0)
+                                x1 = min(jj + 2 * grid_size, w)
+                                
+                                # fig, ax = plt.subplots(figsize=(3,3), dpi=100)
+                                ax = axs[i]
+                                ax.imshow(
+                                    np.where(global_axon_mask[y0:y1, x0:x1], 1, np.nan),
+                                    interpolation='none',
+                                    cmap='Set1',
+                                    alpha=0.5
+                                )
+                            
+                                ax.imshow(
+                                    np.where(dilated_only[y0:y1, x0:x1], 1, np.nan),
+                                    interpolation='none',
+                                    cmap='tab20b',
+                                    alpha=0.25
+                                )
+                                
+                                overlay_grid(ax, shape=global_axon_mask[y0:y1, x0:x1].shape, 
+                                             grid_size=16, color='grey')
+                                # outline the center grid
+                                center_x = jj - x0
+                                center_y = ii - y0
+                                rect = Rectangle(
+                                    (center_x, center_y),
+                                    min(grid_size, w - jj),
+                                    min(grid_size, h - ii),
+                                    fill=False,
+                                    edgecolor='black',
+                                    linewidth=1.5
+                                )
+                                ax.add_patch(rect)
+                            
+                                ax.set_title(f'Grid ({by}, {bx}), k={k_size}')
+                                ax.set_xticks([])
+                                ax.set_yticks([])
+                                ax.set_aspect('equal')
+                                
+            # save masks
+            save_mask(dilated_masks, output_dir, 
+                      filebase=f'dilated_global_axon_k={k_size}',
+                      save_tif=False)
+        
+        if visualize:
+            ax = axs[0]
+            ax.imshow(
+                np.where(global_axon_mask[y0:y1, x0:x1], 1, np.nan),
+                interpolation='none',
+                cmap='Set1',
+                alpha=0.5
+            )
+            overlay_grid(ax, shape=global_axon_mask[y0:y1, x0:x1].shape, 
+                         grid_size=16, color='grey')
+            # outline the center grid
+            center_x = jj - x0
+            center_y = ii - y0
+            rect = Rectangle(
+                (center_x, center_y),
+                min(grid_size, w - jj),
+                min(grid_size, h - ii),
+                fill=False,
+                edgecolor='black',
+                linewidth=1.5
+            )
+            ax.add_patch(rect)
+            ax.set_title(f'Grid ({by}, {bx}), k=0')
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_aspect('equal')
+        if fig_out is not None:
+            # fig_out.mkdir(parents=True, exexist_ok=True)
+            # save dilation review
+            save_fig(fig, fig_out, 'grid_free_dilation_review', save=1, forms=['png',])
+    
 def dlight_regressor_mask (p_mask, 
                         ref_img,
                         dilation_steps,
@@ -315,6 +479,117 @@ def dlight_regressor_mask (p_mask,
     fig.tight_layout(pad=0.5)
     plt.savefig(output_dir / 'dlight_regressor_review.png', dpi=300, bbox_inches='tight')
     plt.close()
+
+def dlight_regressor_mask_grid_free (p_mask, 
+                        ref_img,
+                        dilation_steps,
+                        neu_pix=3,
+                        output_dir=None,
+                        grid_size=16,
+                        constrain_to_grid=False,
+                        visualize=False,
+                        fig_out=None):
+    
+    global_membrane_mask = np.load(p_mask/'global_dlight_mask_enhanced.npy')
+    global_axon_mask = np.load(p_mask/'dilated_global_axon_k=0.npy')
+    global_axon_mask = np.any(global_axon_mask , axis=(0, 1))
+    h, w = global_axon_mask.shape
+    n_y = (h + grid_size - 1) // grid_size
+    n_x = (w + grid_size - 1) // grid_size
+    
+    if visualize:
+        fig, axs = plt.subplots(1, len(dilation_steps), 
+                                figsize=(4*len(dilation_steps), 4), 
+                                squeeze=False, dpi=150)
+        axs = axs[0]  # flatten for easier indexing
+        fig.suptitle('grid_free_dilation_regressor_review', size=7)
+        
+    for i, k_size in enumerate(dilation_steps):
+        global_axon_mask_dilated = np.load(p_mask/f'dilated_global_axon_k={k_size}.npy')
+        regressor_masks = np.zeros((n_y, n_x, h, w), dtype=bool)
+        # if k_size==0:
+        #     global_axon_mask_dilated = split_map_to_grids_full(global_axon_mask_dilated, n_y, n_x)
+        
+        # Dilate each grid block independently
+        # dilated_roi = np.zeros_like(global_axon_mask, dtype=bool)
+        n = 0
+        for by, ii in enumerate(range(0, h, grid_size)):          # by = block index (y)
+            for bx, jj in enumerate(range(0, w, grid_size)):      # bx = block index (x)
+                grid_map = np.zeros_like(global_axon_mask, dtype=bool)
+                grid_map[ii:min(ii+grid_size, h), jj:min(jj+grid_size, w)] = True
+                # grid_fiber_map = global_axon_mask & grid_map
+                grid_fiber_map = global_axon_mask_dilated[by, bx, :, :]
+                
+                if grid_fiber_map.any():
+                    dilated_block = binary_dilation(grid_fiber_map, iterations=neu_pix).astype('bool')
+                    # dilated_block_last = dilated_block
+                    regressor_mask = ((dilated_block)&(~global_axon_mask)&(~grid_fiber_map)
+                                     &(global_membrane_mask))
+                    if constrain_to_grid:
+                        regressor_masks[by, bx, :, :]= (regressor_mask)&(grid_fiber_map)
+                    else:
+                        regressor_masks[by, bx, :, :] = regressor_mask
+                        n += 1
+                        if visualize & (n<2):
+                            y0 = max(ii - grid_size, 0)
+                            y1 = min(ii + 2 * grid_size, h)
+                            x0 = max(jj - grid_size, 0)
+                            x1 = min(jj + 2 * grid_size, w)
+                            
+                            # fig, ax = plt.subplots(figsize=(3,3), dpi=100)
+                            ax = axs[i]
+                            
+                            ax.imshow(
+                                np.where(global_membrane_mask[y0:y1, x0:x1], 1, np.nan),
+                                interpolation='none',
+                                cmap='Dark2',
+                                alpha=0.15
+                            )
+                            
+                            ax.imshow(
+                                np.where(global_axon_mask[y0:y1, x0:x1], 1, np.nan),
+                                interpolation='none',
+                                cmap='Set1',
+                                alpha=0.5
+                            )
+                            
+                        
+                            ax.imshow(
+                                np.where(regressor_mask[y0:y1, x0:x1], 1, np.nan),
+                                interpolation='none',
+                                cmap='tab20b',
+                                alpha=0.25
+                            )
+                            
+                            overlay_grid(ax, shape=global_axon_mask[y0:y1, x0:x1].shape, 
+                                         grid_size=16, color='grey')
+                            # outline the center grid
+                            center_x = jj - x0
+                            center_y = ii - y0
+                            rect = Rectangle(
+                                (center_x, center_y),
+                                min(grid_size, w - jj),
+                                min(grid_size, h - ii),
+                                fill=False,
+                                edgecolor='black',
+                                linewidth=1.5
+                            )
+                            ax.add_patch(rect)
+                        
+                            ax.set_title(f'Grid ({by}, {bx}), k={k_size}')
+                            ax.set_xticks([])
+                            ax.set_yticks([])
+                            ax.set_aspect('equal')
+
+        # save masks
+        save_mask(regressor_masks, output_dir, 
+                  filebase=f'dlight_regressor_fiber_dilation_k={k_size}',
+                  save_tif=False)   
+    
+    if fig_out is not None:
+        # save dilation review
+        # fig_out.mkdir(parents=True, exexist_ok=True)
+        save_fig(fig, fig_out, 'grid_free_regressor_review', save=1, forms=['png',])
 
 def plot_membrane_mask(mean_img_green, 
                       base_mask, global_dlight_mask_enhanced,

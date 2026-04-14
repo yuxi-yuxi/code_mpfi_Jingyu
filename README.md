@@ -179,6 +179,184 @@ Function: [`dlight_regressor_mask()`](common/mask/utils_mask.py) in `utils_mask.
 
 *Description to be added.*
 
+---
+
+## dLight Analysis Pipeline
+
+This section provides step-by-step instructions for processing dLight imaging data. Two pipelines are available depending on the experimental design: **LC-axon dLight** (for DBH-Cre labeled noradrenergic axons) and **GECO dLight** (for simultaneous calcium and dopamine imaging).
+
+### LC-Axon dLight Analysis Pipeline
+
+#### Step 1: Image Registration with Suite2P
+
+Run Suite2P for non-rigid motion correction of two-photon imaging data.
+
+**Script:** [`dlight_imaging/run-suite2p-registration.py`](dlight_imaging/run-suite2p-registration.py)
+
+**Key Parameters:**
+```python
+ops['do_registration'] = 1      # Enable registration
+ops['roidetect'] = 0            # Disable ROI detection (done separately)
+ops['reg_tif'] = 1              # Save registered TIFFs
+ops['reg_tif_chan2'] = 1        # Save registered channel 2 TIFFs
+ops['align_by_chan'] = 1        # Align by dLight channel
+ops['nonrigid'] = 1             # Enable non-rigid registration
+ops['do_bidiphase'] = 1         # Correct bidirectional scanning artifacts
+```
+
+**Output:**
+- `{session_path}/nonrigid_reg/suite2p/plane0/data.bin` — Registered dLight movie (channel 1)
+- `{session_path}/nonrigid_reg/suite2p/plane0/data_chan2.bin` — Registered tdTomato movie (channel 2)
+- `{session_path}/nonrigid_reg/suite2p/plane0/ops.npy` — Suite2P processing parameters
+
+#### Step 2: LC Fiber Mask Generation
+
+Manually segment LC fiber masks using the fiber segmentation GUI.
+
+**Tool:** `\\mpfi.org\Public\Wang lab\Dinghao\code_mpfi_dinghao\imaging_code\fibre_segger_GUI`
+
+**Output:**
+- Binary mask file containing LC fiber ROIs for each recording session
+
+#### Step 3: Signal Extraction and Motion Artifact Regression
+
+Extract dLight and tdTomato signals from defined ROIs and perform single-trial linear regression to correct for motion artifacts.
+
+**Script:** [`dlight_imaging/regression/regression_axon_dlight_grid_free.py`](dlight_imaging/regression/regression_axon_dlight_grid_free.py)
+
+**Processing Steps:**
+
+1. **Mask Generation** ([`load_masks_axon_dlight()`](dlight_imaging/regression/utils_regression.py#L46))
+   - dLight expression membrane mask — identifies pixels with dLight expression
+   - dLight regressor mask — background dLight signal for motion correction
+   - LC-fiber neuropil mask — surrounding neuropil for signal contamination correction
+   - LC-fiber dilation masks — dilated fiber masks at multiple kernel sizes (0–10 pixels)
+
+2. **Signal Extraction** ([`traces_extraction_parallel()`](dlight_imaging/regression/utils_regression.py#L278))
+   - Extract dLight signals from fiber masks with dLight expression
+   - Extract tdTomato signals from fiber masks
+   - Extract neuropil signals for contamination correction
+
+3. **Single-Trial Linear Regression** ([`single_trial_regression_parallel()`](dlight_imaging/regression/utils_regression.py#L581))
+   - Perform trial-by-trial regression using dLight background and tdTomato signals as regressors
+   - Subtract estimated motion artifacts from neuropil-corrected dLight signals
+
+**Output:**
+- `{rec}_raw_traces_k={dilation}.npz` — Raw extracted traces (dLight, tdTomato, neuropil)
+- `corrected_dlight_trace.npy` — Motion-corrected dLight traces
+- `regression_qc.npy` — Regression quality control metrics (R², coefficients)
+
+#### Step 4: Response Quantification and Statistical Analysis
+
+Calculate ΔF/F and identify significantly responsive grids using shuffle-based statistics.
+
+**Script:** [`dlight_imaging/Dbh_dlight/run_response_stats_axon_dlight.py`](dlight_imaging/Dbh_dlight/run_response_stats_axon_dlight.py)
+
+**Processing Steps:**
+
+1. **ΔF/F Calculation** ([`percentile_dff()`](common/utils_imaging.py))
+   - Calculate ΔF/F using 20th percentile baseline
+
+2. **Trace Filtering** ([`trace_filter()`](common/utils_basic.py))
+   - Remove outlier frames exceeding 5 SD threshold
+
+3. **Response Quantification** ([`quantify_event_response()`](common/event_response_quantification.py))
+   - Compute mean response amplitude in defined time windows
+   - Perform shuffle-based significance testing (1000 iterations)
+
+**Output:**
+- `dff_corrected_dlight.npy` — ΔF/F traces for corrected dLight signals
+- `dff_red.npy` — ΔF/F traces for tdTomato signals
+- `{rec}_profile_dilation={k}_stat_dlight.parquet` — Grid-wise response statistics (amplitude, significance)
+- `{rec}_profile_dilation={k}_stat_red.parquet` — Grid-wise tdTomato response statistics
+
+---
+
+### GECO dLight Analysis Pipeline
+
+#### Step 1: Image Registration and GECO ROI Detection with Suite2P
+
+Run Suite2P for motion correction and anatomical ROI detection based on GECO expression.
+
+**Script:** [`dlight_imaging/run-suite2p-anat_detec_geco.py`](dlight_imaging/run-suite2p-anat_detec_geco.py)
+
+**Key Parameters:**
+```python
+ops['do_registration'] = 1      # Enable registration
+ops['roidetect'] = 1            # Enable ROI detection
+ops['anatomical_only'] = 3      # Use Cellpose for anatomical detection
+ops['functional_chan'] = 2      # GECO is functional channel
+ops['align_by_chan'] = 1        # Align by dLight channel
+ops['nonrigid'] = 1             # Enable non-rigid registration
+ops['circular_neuropil'] = True # Circular neuropil masks
+ops['inner_neuropil_radius'] = 2
+```
+
+**Output:**
+- `{session_path}/nonrigid_reg_geco/suite2p/plane0/data.bin` — Registered dLight movie
+- `{session_path}/nonrigid_reg_geco/suite2p/plane0/data_chan2.bin` — Registered GECO movie
+- `{session_path}/nonrigid_reg_geco/suite2p_anat_detec/plane0/stat.npy` — GECO ROI statistics
+- `{session_path}/nonrigid_reg_geco/suite2p_anat_detec/plane0/F.npy` — GECO fluorescence traces
+- `{session_path}/nonrigid_reg_geco/suite2p_anat_detec/plane0/Fneu.npy` — GECO neuropil traces
+
+#### Step 2: Signal Extraction and Motion Artifact Regression
+
+Extract dLight signals from GECO ROIs and perform regression-based motion correction.
+
+**Script:** [`dlight_imaging/regression/regression_geco_dlight.py`](dlight_imaging/regression/regression_geco_dlight.py)
+
+**Processing Steps:**
+
+1. **Mask Generation** ([`load_masks_geco_dlight()`](dlight_imaging/regression/utils_regression.py#L66))
+   - dLight expression membrane mask — identifies pixels with dLight expression
+   - dLight regressor mask — background dLight signal surrounding each ROI
+   - GECO soma classification — identifies soma vs. non-soma ROIs
+
+2. **Identify Active GECO ROIs**
+   - Classify ROIs based on calcium activity patterns
+   - Extract soma indices for further analysis
+
+3. **Signal Extraction** ([`analyze_all_ROI_traces_and_background()`](dlight_imaging/regression/utils_regression_geco/Extract_dlight_masked_GECO_ROI_traces.py))
+   - Extract GECO signals from detected ROIs
+   - Extract dLight signals from ROI masks with dLight expression
+   - Extract background dLight signals for motion correction
+
+4. **Single-Trial Linear Regression** ([`run_and_save_motion_correction_results()`](dlight_imaging/regression/utils_regression_geco/Regression_Red_From_Green_ROIs_Single_Trial_geco.py))
+   - Mask GECO frames with large calcium transients (>median + 2×RSD) to prevent bias
+   - Perform trial-by-trial regression using dLight background and GECO baseline signals as regressors
+   - Subtract estimated motion artifacts from neuropil-corrected dLight signals
+
+**Output:**
+- `geco_roi_dlight_mask_geco_traces.npz` — Extracted GECO traces from dLight-expressing pixels
+- `geco_roi_dlight_mask_dlight_traces.npz` — Extracted dLight traces and background signals
+- `{regression_name}_res_traces.npz` — Motion-corrected dLight traces
+- `dff_corrected_dlight.npy` — ΔF/F for corrected dLight signals
+- `dff_geco_.npy` — ΔF/F for GECO signals
+
+#### Step 3: Response Quantification and Statistical Analysis
+
+Calculate ΔF/F and identify DA-responsive and calcium-responsive ROIs.
+
+**Script:** [`dlight_imaging/geco_dlight/run_response_stats_geco_dlight.py`](dlight_imaging/geco_dlight/run_response_stats_geco_dlight.py)
+
+*For z-scored traces:* [`dlight_imaging/geco_dlight/run_response_stats_geco_dlight_zscore.py`](dlight_imaging/geco_dlight/run_response_stats_geco_dlight_zscore.py)
+
+**Processing Steps:**
+
+1. **ΔF/F Calculation** ([`percentile_dff()`](common/utils_imaging.py))
+   - Calculate ΔF/F using 20th percentile baseline for both dLight and GECO
+
+2. **Response Quantification** ([`quantify_event_response()`](common/event_response_quantification.py))
+   - Compute mean dLight response in defined time windows (default: baseline -1 to 0 s, response 0 to 1 s)
+   - Compute mean GECO response in defined time windows (default: baseline -1 to 0 s, response 0.5 to 1.5 s)
+   - Perform shuffle-based significance testing (1000 iterations)
+
+**Output:**
+- `baseline_corrected_dlight.npy` — Baseline values for dLight ΔF/F calculation
+- `baseline_geco_.npy` — Baseline values for GECO ΔF/F calculation
+- `{rec}_profile_stat_dlight.parquet` — ROI-wise dLight response statistics
+- `{rec}_profile_stat_geco.parquet` — ROI-wise GECO response statistics
+
 
 ## Installation
 

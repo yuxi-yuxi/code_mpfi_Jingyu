@@ -38,7 +38,7 @@ elif drug == 'propranolol':
 
 # Parameters
 time_bin_size = 0.1  # seconds (3 frames at 30Hz)
-max_lap_duration_s = 6.0  # fixed time window in seconds (40 bins total)
+max_lap_duration_s = 4.0  # fixed time window in seconds (40 bins total)
 frame_rate = 30  # Hz
 track_length = 180  # cm (for lap detection)
 

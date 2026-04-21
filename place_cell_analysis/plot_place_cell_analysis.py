@@ -14,7 +14,7 @@ from common.utils_basic import nearest_mapping, normalize
 from common.robust_sd_filter import robust_filter_along_axis
 #%% PATHS AND PARAMS
 
-# session list 
+# session list
 drug = 'SCH'
 # drug = 'prazosin'
 # drug = 'propranolol'
@@ -35,6 +35,10 @@ track_length = 180  # cm
 bin_size = 4  # cm
 n_bins = int(track_length / bin_size)  # 45 bins
 
+# Use GPU-accelerated batch calculation for specified correlation types
+# Options: 'odd_even', 'mean_pairwise', 'consecutive' (or None for all)
+corr_methods = ['odd_even', 'consecutive']
+
 # PATHS
 OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\GCaMP_drug_infusion")
 # OUTPUT_RES = OUT_DIR_RAW_DATA / "processed_dataframe"
@@ -43,7 +47,8 @@ OUTPUT_RES = OUT_DIR_RAW_DATA /'place_cell_dataframe'
 df_place_field_all_ss1 = pd.DataFrame()
 df_place_field_all_ss2 = pd.DataFrame()
 
-for _, rec in rec_drug.iterrows():
+drug = 'ctrl'
+for _, rec in rec_ctrl.iterrows():
     anm = rec['anm']
     date = rec['date']
     print(f'\n{anm}-{date}')
@@ -56,44 +61,49 @@ for _, rec in rec_drug.iterrows():
     # p_beh = OUT_DIR_RAW_DATA / 'behaviour_profile' / f'{rec_id}.pkl'
     # beh = pd.read_pickle(p_beh)
     try:
-        df_place_field_ss1 = pd.read_parquet(OUTPUT_RES / f'{rec_id}_place_cell_dataframe.parquet')
+        parquet_path = OUTPUT_RES / f'{rec_id}_place_cell_dataframe.parquet'
+        df_place_field_ss1 = pd.read_parquet(parquet_path)
         df_place_field_ss1['rec_date'] = f'{anm}-{date}'
+        # Calculate place cell stability if not already computed
+        if 'odd_even_corr' not in df_place_field_ss1.columns or 'consecutive_corr' not in df_place_field_ss1.columns:
+            print(f"  Computing trial correlations for {rec_id}...")
+            per_lap_profiles_ss1 = df_place_field_ss1['per_lap_profile'].tolist()
+            corr_results_ss1 = pcf.calculate_all_trial_correlations_gpu(per_lap_profiles_ss1, methods=corr_methods, gpu=True)
+            df_place_field_ss1['odd_even_corr'] = corr_results_ss1['odd_even']
+            df_place_field_ss1['consecutive_corr'] = corr_results_ss1['consecutive']
+            # Save updated dataframe
+            df_place_field_ss1.drop(columns=['rec_date']).to_parquet(parquet_path)
+            print(f"  Saved updated dataframe to {parquet_path}")
         df_place_field_all_ss1 = pd.concat((df_place_field_all_ss1, df_place_field_ss1))
-    except:
-        print (rec_id)
-    
+    except Exception as e:
+        print(f"  Error loading {rec_id}: {e}")
+
     ss = '04'
     rec_id = f'{anm}-{date}-{ss}'
     print(f'loading {rec_id}----------------------')
     # p_beh = OUT_DIR_RAW_DATA / 'behaviour_profile' / f'{rec_id}.pkl'
     # beh = pd.read_pickle(p_beh)
     try:
-        df_place_field_ss2 = pd.read_parquet(OUTPUT_RES / f'{rec_id}_place_cell_dataframe.parquet')
+        parquet_path = OUTPUT_RES / f'{rec_id}_place_cell_dataframe.parquet'
+        df_place_field_ss2 = pd.read_parquet(parquet_path)
         df_place_field_ss2['rec_date'] = f'{anm}-{date}'
+        # Calculate place cell stability if not already computed
+        if 'odd_even_corr' not in df_place_field_ss2.columns or 'consecutive_corr' not in df_place_field_ss2.columns:
+            print(f"  Computing trial correlations for {rec_id}...")
+            per_lap_profiles_ss2 = df_place_field_ss2['per_lap_profile'].tolist()
+            corr_results_ss2 = pcf.calculate_all_trial_correlations_gpu(per_lap_profiles_ss2, methods=corr_methods, gpu=True)
+            df_place_field_ss2['odd_even_corr'] = corr_results_ss2['odd_even']
+            df_place_field_ss2['consecutive_corr'] = corr_results_ss2['consecutive']
+            # Save updated dataframe
+            df_place_field_ss2.drop(columns=['rec_date']).to_parquet(parquet_path)
+            print(f"  Saved updated dataframe to {parquet_path}")
         df_place_field_all_ss2 = pd.concat((df_place_field_all_ss2, df_place_field_ss2))
-    except:
-        print (rec_id)
+    except Exception as e:
+        print(f"  Error loading {rec_id}: {e}")
         
-#%% Calculate place cell stability
+#%% visualization
 from scipy import stats
 
-# Use GPU-accelerated batch calculation for specified correlation types
-# Options: 'odd_even', 'mean_pairwise', 'consecutive' (or None for all)
-corr_methods = ['odd_even', 'consecutive']
-
-print("Calculating trial correlations for SS1 (GPU)...")
-per_lap_profiles_ss1 = df_place_field_all_ss1['per_lap_profile'].tolist()
-corr_results_ss1 = pcf.calculate_all_trial_correlations_gpu(per_lap_profiles_ss1, methods=corr_methods, gpu=True)
-df_place_field_all_ss1['stability'] = corr_results_ss1['odd_even']
-df_place_field_all_ss1['consecutive_corr'] = corr_results_ss1['consecutive']
-
-print("Calculating trial correlations for SS2 (GPU)...")
-per_lap_profiles_ss2 = df_place_field_all_ss2['per_lap_profile'].tolist()
-corr_results_ss2 = pcf.calculate_all_trial_correlations_gpu(per_lap_profiles_ss2, methods=corr_methods, gpu=True)
-df_place_field_all_ss2['stability'] = corr_results_ss2['odd_even']
-df_place_field_all_ss2['consecutive_corr'] = corr_results_ss2['consecutive']
-
-#%% visualization
 SI_threshold = 0.15
 shuff_SI_thresh = 99
 
@@ -167,8 +177,10 @@ for imshow_array in [np.stack(df_ss1_ordered['place_field_map_norm']),
 
 #%% Place cell stability comparison: ss1 (baseline) vs ss2 (drug)
 # Get stability values for place cells in each session
-stability_ss1 = df_place_cell_ss1['stability'].dropna().values
-stability_ss2 = df_place_cell_ss2['stability'].dropna().values
+key_stab = 'odd_even_corr'
+# key_stab = 'consecutive_corr'
+stability_ss1 = df_place_cell_ss1[key_stab].dropna().values
+stability_ss2 = df_place_cell_ss2[key_stab].dropna().values
 
 print(f"\n=== Place Cell Stability Analysis ===")
 print(f"SS1 (baseline): n={len(stability_ss1)}, mean={np.mean(stability_ss1):.3f}, median={np.median(stability_ss1):.3f}")

@@ -83,7 +83,6 @@ venv.bak/
 defunc/
 common/defunc/
 Rdlight_imaging/
-dlight_imagaing_learning/
 
 # Place cell related code in drug_infusion
 drug_infusion/place_cell_analysis.py

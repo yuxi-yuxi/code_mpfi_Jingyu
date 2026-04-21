@@ -41,7 +41,8 @@ OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion")
 OUTPUT_RES = Path(r'Z:\Jingyu\GCaMP_drug_infusion\place_cell_dataframe')
 #%% Main
 error_list = []
-for _, rec in rec_drug.iterrows():
+
+for _, rec in rec_ctrl.iterrows():
     anm = rec['anm']
     date = rec['date']
     print(f'\n{anm}-{date}')

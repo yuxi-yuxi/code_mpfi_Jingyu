@@ -33,15 +33,38 @@ thresh_baseline_dlight = 2
 thresh_baseline_red    = 1
 
 regression_name ='single_trial_regression'
-save_plot = 1
+save_plot = 0
 #%% MAIN
 # rec_lst = ['AC964-20250131-02', ] # for testing
 
 # load pooled dataframe
-p_pooled_df = OUT_DIR_DF / rf"df_population_profile_pooled_dilation=0_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}.parquet"
+p_pooled_df = OUT_DIR_DF / rf"df_population_profile_pooled_dilation=0_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}_0621.parquet"
 df_pool_all = pd.read_parquet(p_pooled_df)
 
 df_pool_sorted = df_pool_all.loc[(df_pool_all['dlight_valid'])&(df_pool_all['red_valid'])&(~df_pool_all['edge'])]
+
+#%% 20260621 add in plot for brightness-DA response correlation
+from scipy import stats
+
+fig, ax = plt.subplots(dpi=300, figsize=(2.5, 2.5))
+x = df_pool_sorted['baseline_dlight_mean'].values
+y = df_pool_sorted['response_amplitude'].values
+
+ax.scatter(x, y, s=5, alpha=0.5, color='tab:green', edgecolors='none')
+
+# linear regression line
+slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+x_fit = np.linspace(x.min(), x.max(), 100)
+ax.plot(x_fit, slope * x_fit + intercept, color='k', lw=1)
+
+ax.set_xlim(left=0)
+ax.set_xlabel('Baseline dLight (mean)')
+ax.set_ylabel('Response amplitude')
+ax.set_title(f'r={r_value:.2f}, p={p_value:.3e}', fontsize=8)
+
+save_fig(fig, OUT_DIR_FIG, r'correlation_baseline_dlight_vs_response_amplitude_pre={}_post={}_ES={}_amp={}.pdf'
+            .format(dlight_pre, dlight_post, effect_size_thresh, amp_shuff_thresh_up), save=save_plot)
+
 #%% plot heatmap
 
 # df_pool_sorted = df_pool_sorted.sort_values(by=['roi_type', 'response_amplitude'], ascending=[False, False])

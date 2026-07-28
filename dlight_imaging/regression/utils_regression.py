@@ -43,8 +43,25 @@ def load_bin_file(data_path, file_name, n_frames=2000, height=512, width=512):
     mov = reg_data.astype('float32')
     return mov
 
+def load_bin_file_memmap(data_path, file_name, n_frames=2000, height=512, width=512):
+    """
+    Load a registered imaging movie as a raw int16 memmap, without materializing
+    it as float32 in RAM.
+
+    Intended for long recordings where the full float32 stack would not fit in
+    memory. Downstream code is responsible for casting per-batch slices to float32.
+
+    Returns:
+        np.memmap: Shape (n_frames, height, width), dtype int16, mode='r'.
+    """
+    data_bin = data_path + file_name
+    return np.memmap(data_bin, mode='r', dtype='int16',
+                     shape=(n_frames, height, width))
+
 def load_masks_axon_dlight(rec, OUT_DIR_RAW_REGRESS, dilation_steps = (0, 2, 4, 6, 8, 10),
                            constrain_to_grid = True,
+                           p_fiber_masks=None,
+                           fiber_mask_name=None,
                            visualize_neu = False,
                            visualize_dilation = False,
                            visualize_regressor = False):
@@ -54,16 +71,18 @@ def load_masks_axon_dlight(rec, OUT_DIR_RAW_REGRESS, dilation_steps = (0, 2, 4, 
             p_masks.mkdir(parents=True, exist_ok=False)
         extract_axon_dlight_masks(rec, p_masks, dilation_steps,
                                   constrain_to_grid,
+                                  p_fiber_masks,
+                                  fiber_mask_name,
                                   visualize_neu,
                                   visualize_dilation,
                                   visualize_regressor)
     return p_masks
 
-def load_masks_geco_dlight(rec, OUT_DIR_RAW_REGRESS):
+def load_masks_geco_dlight(rec, OUT_DIR_RAW_REGRESS, p_suite2p=None):
     p_masks = OUT_DIR_RAW_REGRESS / rf'{rec}'/'masks'
-    if not p_masks.exists():
-        p_masks.mkdir(parents=True, exist_ok=False)
-        extract_geco_dlight_masks(rec, p_masks,)
+    if not (p_masks/'global_dlight_mask_enhanced.npy').exists():
+        p_masks.mkdir(parents=True, exist_ok=True)
+        extract_geco_dlight_masks(rec, p_masks, p_suite2p)
     return p_masks
 
 def load_behaviour(rec, OUT_DIR_REGRESS, num_frames):
@@ -165,12 +184,15 @@ def _trace_extraction_worker(block_idx, mov, movr,
     red_mask_full[block_slice] = local_red_mask
     red_trace = movr[:, red_mask_full].mean(axis=1)
     
-    local_neuropil_mask = neuropil_mask[row, col, :, :]
-    n_neuropil_mask = int(np.sum(local_neuropil_mask))
-    if n_neuropil_mask < 10: return None
-    neuropil_trace = mov[:, local_neuropil_mask].mean(axis=1)
-    neuropil_trace_red = movr[:, local_neuropil_mask].mean(axis=1)
-    
+    if neuropil_mask is not None:
+        local_neuropil_mask = neuropil_mask[row, col, :, :]
+        n_neuropil_mask = int(np.sum(local_neuropil_mask))
+        if n_neuropil_mask < 10: return None
+        neuropil_trace = mov[:, local_neuropil_mask].mean(axis=1)
+        neuropil_trace_red = movr[:, local_neuropil_mask].mean(axis=1)
+    else:
+        neuropil_trace = np.full(mov.shape[0], np.nan)
+        neuropil_trace_red = np.full(movr.shape[0], np.nan)
     return {'original_dlight': original_green_trace,
             'red': red_trace, 'dlight_regressor': dlight_regressor_trace,
             'neuropil': neuropil_trace,
@@ -212,16 +234,61 @@ def _trace_extraction_worker_grid_free(block_idx, mov, movr,
     # red_mask_full[block_slice] = local_red_mask
     red_trace = movr[:, local_red_mask].mean(axis=1)
     
-    local_neuropil_mask = neuropil_mask[row, col, :, :]
-    n_neuropil_mask = int(np.sum(local_neuropil_mask))
-    if n_neuropil_mask < 10: return None
-    neuropil_trace = mov[:, local_neuropil_mask].mean(axis=1)
-    neuropil_trace_red = movr[:, local_neuropil_mask].mean(axis=1)
+    if neuropil_mask is None:
+        return None
+    else:
+        local_neuropil_mask = neuropil_mask[row, col, :, :]
+        n_neuropil_mask = int(np.sum(local_neuropil_mask))
+        if n_neuropil_mask < 10: return None
+        neuropil_trace = mov[:, local_neuropil_mask].mean(axis=1)
+        neuropil_trace_red = movr[:, local_neuropil_mask].mean(axis=1)
     
     return {'original_dlight': original_green_trace,
             'red': red_trace, 'dlight_regressor': dlight_regressor_trace,
             'neuropil': neuropil_trace,
             'red_neuropil': neuropil_trace_red,}
+
+def _Rdlight_trace_extraction_worker(block_idx, mov, movr, 
+                             global_mask_Rdlight, global_mask_ctrl,
+                             grid_size=16):
+
+    H, W = mov.shape[1], mov.shape[2]
+    n_blocks_x = W // grid_size
+    row, col = block_idx // n_blocks_x, block_idx % n_blocks_x
+
+    block_slice = tuple(slice(r * grid_size, (r + 1) * grid_size) for r in [row, col])
+    
+    and_mask = (global_mask_Rdlight)&(global_mask_ctrl)
+    
+    # --- 1. Extract Rdlight from global_mask_Rdlight and intersection mask ---
+    local_Rdlight_mask = global_mask_Rdlight[block_slice]
+    n_pix_mask = int(np.sum(local_Rdlight_mask))
+    if n_pix_mask < 10: return None
+    Rdlight_mask_full = np.zeros_like(global_mask_Rdlight)
+    Rdlight_mask_full[block_slice] = local_Rdlight_mask
+    original_Rdlight_trace = movr[:, Rdlight_mask_full].mean(axis=1)
+    
+    local_ctrl_mask = global_mask_ctrl[block_slice]
+    n_pix_mask = int(np.sum(local_ctrl_mask))
+    if n_pix_mask < 10: return None
+    ctrl_mask_full = np.zeros_like(global_mask_ctrl)
+    ctrl_mask_full[block_slice] = local_ctrl_mask
+    original_ctrl_trace = mov[:, ctrl_mask_full].mean(axis=1)
+    
+    local_and_mask = and_mask[block_slice]
+    n_pix_mask = int(np.sum(local_and_mask))
+    if n_pix_mask < 10: return None
+    and_mask_full = np.zeros_like(and_mask)
+    and_mask_full[block_slice] = local_and_mask
+    original_and_Rdilight_trace = movr[:, and_mask_full].mean(axis=1)
+    original_and_ctrl_trace = mov[:, and_mask_full].mean(axis=1)
+
+    
+    return {'original_Rdlight': original_Rdlight_trace,
+            'original_ctrl': original_ctrl_trace,
+            'original_and_Rdlight': original_and_Rdilight_trace, 
+            'original_and_ctrl': original_and_ctrl_trace,
+            }
 
 def traces_extraction_parallel(mov, movr, global_mask_dilated_axon, 
                                global_mask_red, global_mask_dlight,
@@ -291,6 +358,59 @@ def traces_extraction_parallel(mov, movr, global_mask_dilated_axon,
         neuropil_red=red_neuropil_traces_grid
     )
 
+def traces_extraction_parallel_Rdlight(mov, movr, 
+                                       global_mask_Rdlight, 
+                                       global_mask_ctrl,
+                                       out_dir=None,
+                                       **kwargs):
+    """
+    Main orchestrator that runs single-trial red-channel correction in parallel.
+    """
+    T, H, W = mov.shape
+    grid_size = kwargs.get('grid_size', 16)
+    n_blocks_y = H // grid_size
+    n_blocks_x = W // grid_size
+    num_blocks = n_blocks_y * n_blocks_x
+    
+    n_jobs = kwargs.pop('n_jobs', -1)
+    
+    # Extract only the parameters needed by the worker function
+    worker_params = {
+        'grid_size': kwargs.get('grid_size', 16),
+    }
+
+    all_traces = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(_Rdlight_trace_extraction_worker)(i, mov, movr, 
+                                         global_mask_Rdlight, global_mask_ctrl,
+                                         **worker_params) 
+        for i in tqdm(range(num_blocks), desc="extracting traces from each block..."))
+    
+
+    # Unpack results into grid arrays
+    original_Rdlight_traces_grid = np.full((n_blocks_y, n_blocks_x, T), np.nan)
+    original_ctrl_traces_grid = np.full((n_blocks_y, n_blocks_x, T), np.nan)
+    original_Rdlight_and_traces_grid = np.full((n_blocks_y, n_blocks_x, T), np.nan)
+    original_ctrl_and_traces_grid = np.full((n_blocks_y, n_blocks_x, T), np.nan)
+
+    for i, res_dict in enumerate(all_traces):
+        row, col = i // n_blocks_x, i % n_blocks_x
+        if res_dict is not None and type(res_dict) is not tuple: # handle some weird exception
+            original_Rdlight_traces_grid[row, col, :] = res_dict['original_Rdlight']
+            original_ctrl_traces_grid[row, col, :] = res_dict['original_ctrl']
+            original_Rdlight_and_traces_grid = res_dict['original_and_Rdlight']
+            original_ctrl_and_traces_grid[row, col, :] = res_dict['original_and_ctrl']
+    
+
+    data_save_path = Path(out_dir)
+    print(f"\nSaving extracted traces to {data_save_path}")
+    np.savez_compressed(
+        data_save_path,
+        original_Rdlight=original_Rdlight_traces_grid,
+        original_ctrl=original_ctrl_traces_grid,
+        original_and_Rdilight=original_Rdlight_and_traces_grid,
+        original_and_ctrl=original_ctrl_and_traces_grid
+    )
+    
 def traces_extraction_parallel_roi(mov, movr, global_mask_green, global_mask_red,
                                    dlight_regressor_mask, neuropil_mask,
                                    out_dir=None,
@@ -364,11 +484,12 @@ def _single_trial_regression_worker(block_idx,
     
     original_green_trace  = original_green_traces[row, col]
     green_regressor_trace = green_regressor_traces[row, col]
-    red_regressor_trace   = red_regressor_traces[row, col]
-    
-    if np.any((np.isnan(original_green_trace)|
-        np.isnan(green_regressor_trace)|
-        np.isnan(red_regressor_trace))):
+    red_regressor_trace   = red_regressor_traces[row, col] if red_regressor_traces is not None else None
+
+    has_nan = np.any(np.isnan(original_green_trace) | np.isnan(green_regressor_trace))
+    if red_regressor_trace is not None:
+        has_nan = has_nan or np.any(np.isnan(red_regressor_trace))
+    if has_nan:
         final_corrected_trace = np.nan
         qc_dict = None
     else:
@@ -405,23 +526,23 @@ def _single_trial_regression_worker(block_idx,
             # --- Extract Slices for this specific window ---
             y_target = original_green_trace[start_frame:end_frame]
             green_regressor = green_regressor_trace[start_frame:end_frame]
-            red_regressor = red_regressor_trace[start_frame:end_frame]
-    
+
             # --- Build and Fit a Model for this window ONLY ---
-            X_regressors = np.vstack([green_regressor, red_regressor]).T
-            
+            if red_regressor_trace is not None:
+                red_regressor = red_regressor_trace[start_frame:end_frame]
+                X_regressors = np.vstack([green_regressor, red_regressor]).T
+            else:
+                X_regressors = green_regressor.reshape(-1, 1)
+
             try:
-                # Non-negative least squares
-                model = LinearRegression().fit(X_regressors, y_target) 
-                # estimated_artifact_slice = model.predict(X_regressors)
-                # corrected_slice = y_target - estimated_artifact_slice
-                
-                # The Fix: Do not subtract the intercept. 
-                # Subtract only the time-varying components: 
-                # Gcleaned =Graw −[β1* (R(t)−mean(R(t))) + β2 * (N(t)-mean(N(t)))] 
-                # Beta 1: neuropil regressor constant; Beta 2: red channel regressor constant
-                b1, b2 = model.coef_[0], model.coef_[1]
-    
+                model = LinearRegression().fit(X_regressors, y_target)
+
+                # The Fix: Do not subtract the intercept.
+                # Subtract only the time-varying components:
+                # Gcleaned =Graw −[β1* (R(t)−mean(R(t))) + β2 * (N(t)-mean(N(t)))]
+                b1 = model.coef_[0]
+                b2 = model.coef_[1] if red_regressor_trace is not None else np.nan
+
                 # Collect regression metrics for this event
                 r2_list.append(model.score(X_regressors, y_target))
                 b1_list.append(b1)
@@ -429,10 +550,11 @@ def _single_trial_regression_worker(block_idx,
                 event_frame_list.append(onset)
                 start_frame_list.append(start_frame)
                 end_frame_list.append(end_frame)
-                
+
                 # estimated time-varying artifact components
-                est_art = b1*(green_regressor - np.nanmean(green_regressor)) \
-                            + b2*(red_regressor - np.nanmean(red_regressor))
+                est_art = b1*(green_regressor - np.nanmean(green_regressor))
+                if red_regressor_trace is not None:
+                    est_art += b2*(red_regressor - np.nanmean(red_regressor))
                 
                 corrected_slice = y_target - est_art
                 

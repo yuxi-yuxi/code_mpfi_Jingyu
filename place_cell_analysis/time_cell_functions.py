@@ -71,7 +71,12 @@ def temporal_binning(running_calcium_map_img,
     occupancy_raw : ndarray (n_time_bins,)
         Total frame count per time bin (summed across laps)
     per_lap_profile : ndarray (n_cells, n_laps, n_time_bins) or []
-        Event rate per time bin for each cell and lap
+        Event rate per time bin for each cell and lap. Bins beyond the
+        actual lap end (lap shorter than max_lap_duration_s) are NaN
+        because their per-lap occupancy is 0.
+    per_lap_occupancy : ndarray (n_laps, n_time_bins) or []
+        Frame count per time bin per lap. Trailing bins are 0 for laps
+        shorter than max_lap_duration_s.
     n_time_bins : int
         Number of time bins used
     median_lap_duration_s : float
@@ -86,7 +91,7 @@ def temporal_binning(running_calcium_map_img,
     n_laps = len(lap_start_indices) - 1
 
     if n_laps < 2:
-        return (np.array([]), np.array([]), np.array([]), [], 0, 0)
+        return (np.array([]), np.array([]), np.array([]), [], [], 0, 0)
 
     # Calculate lap durations for reference
     lap_durations_frames = []
@@ -110,8 +115,10 @@ def temporal_binning(running_calcium_map_img,
 
     if save_lap_profile:
         per_lap_profile = np.full((n_cells, n_laps, n_time_bins), np.nan)
+        per_lap_occupancy = np.zeros((n_laps, n_time_bins))
     else:
         per_lap_profile = []
+        per_lap_occupancy = []
 
     # Process each lap
     for i_lap in range(n_laps):
@@ -151,6 +158,7 @@ def temporal_binning(running_calcium_map_img,
 
         # Per-lap profile
         if save_lap_profile:
+            per_lap_occupancy[i_lap] = lap_occupancy
             lap_occupancy_safe = lap_occupancy.copy()
             lap_occupancy_safe[lap_occupancy_safe == 0] = np.nan
 
@@ -163,7 +171,63 @@ def temporal_binning(running_calcium_map_img,
     occupancy_safe[occupancy_safe == 0] = np.nan
     event_rate_raw = event_count_raw / occupancy_safe
 
-    return event_count_raw, event_rate_raw, occupancy_raw, per_lap_profile, n_time_bins, median_lap_duration_s
+    return event_count_raw, event_rate_raw, occupancy_raw, per_lap_profile, per_lap_occupancy, n_time_bins, median_lap_duration_s
+
+
+def compute_valid_event_rate(per_lap_profile, per_lap_occupancy, valid_trials_mask=None):
+    """
+    Recompute per-cell event rate and occupancy from only valid laps.
+
+    Unlike the spatial version, NaN in per_lap_profile has two sources here:
+      1. Extreme dFF values in the middle of a lap (occupancy > 0 but dFF was
+         masked out) — these laps are invalid and excluded per cell.
+      2. Laps shorter than max_lap_duration_s, leaving trailing bins with
+         occupancy == 0 — these are NOT treated as invalid; the valid bins
+         from such laps still contribute.
+
+    Parameters:
+    -----------
+    per_lap_profile : ndarray (n_cells, n_laps, n_time_bins)
+        Per-lap mean dF/F per time bin
+    per_lap_occupancy : ndarray (n_laps, n_time_bins)
+        Frame count per time bin per lap (0 in trailing bins for short laps)
+    valid_trials_mask : ndarray (n_cells, n_laps) or None
+        Boolean mask; True = use that lap for that cell. If None, defaults
+        to excluding laps that have a NaN bin where the lap actually had
+        occupancy (case 1 above).
+
+    Returns:
+    --------
+    event_count : ndarray (n_cells, n_time_bins)
+    event_rate : ndarray (n_cells, n_time_bins)
+    occupancy : ndarray (n_cells, n_time_bins)
+    """
+    per_lap_profile = np.asarray(per_lap_profile)
+    per_lap_occupancy = np.asarray(per_lap_occupancy)
+
+    if valid_trials_mask is None:
+        # Only NaN bins with real occupancy (case 1) invalidate a trial
+        invalid_middle_nan = np.isnan(per_lap_profile) & (per_lap_occupancy[None, :, :] > 0)
+        valid_trials_mask = ~np.any(invalid_middle_nan, axis=-1)
+
+    # per_lap_profile is mean dF/F per bin; multiply back by occupancy
+    # to get sum of dF/F per bin per lap. Zero out bins with no occupancy
+    # to avoid NaN * 0 propagation from short-lap trailing bins.
+    per_lap_count = np.where(
+        per_lap_occupancy[None, :, :] > 0,
+        per_lap_profile * per_lap_occupancy[None, :, :],
+        0.0,
+    )
+
+    mask_3d = valid_trials_mask[:, :, None]  # (n_cells, n_laps, 1)
+
+    event_count = np.nansum(np.where(mask_3d, per_lap_count, 0.0), axis=1)
+    occupancy = np.sum(np.where(mask_3d, per_lap_occupancy[None, :, :], 0.0), axis=1)
+
+    occupancy_safe = np.where(occupancy > 0, occupancy, np.nan)
+    event_rate = event_count / occupancy_safe
+
+    return event_count, event_rate, occupancy
 
 
 def calculate_temporal_info(event_rate, occupancy, gpu=False):
@@ -177,8 +241,9 @@ def calculate_temporal_info(event_rate, occupancy, gpu=False):
     -----------
     event_rate : ndarray (n_cells, n_time_bins) or (n_time_bins,)
         Unsmoothed event rate (mean dF/F) per time bin for each cell
-    occupancy : ndarray (n_time_bins,)
-        Frame count per time bin
+    occupancy : ndarray (n_time_bins,) or (n_cells, n_time_bins)
+        Frame count per time bin. If 2D, per-cell occupancies are used
+        (e.g. after excluding invalid trials per cell).
     gpu : bool
         Whether to use GPU acceleration with CuPy
 
@@ -201,8 +266,14 @@ def calculate_temporal_info(event_rate, occupancy, gpu=False):
         event_rate = event_rate[xp.newaxis, :]
         squeeze_output = True
 
-    total_frames = xp.sum(occupancy)
-    p_t = occupancy / total_frames  # probability per time bin
+    # Support shared (n_time_bins,) or per-cell (n_cells, n_time_bins) occupancy
+    if occupancy.ndim == 1:
+        total_frames = xp.sum(occupancy)
+        p_t = occupancy / total_frames  # (n_time_bins,)
+    else:
+        total_frames = xp.sum(occupancy, axis=1, keepdims=True)  # (n_cells, 1)
+        total_frames_safe = xp.where(total_frames == 0, xp.nan, total_frames)
+        p_t = occupancy / total_frames_safe  # (n_cells, n_time_bins)
 
     # Mean event rate for each cell: r_bar = sum(r_t * p_t)
     r_bar = xp.nansum(event_rate * p_t, axis=1, keepdims=True)
@@ -239,8 +310,6 @@ def calculate_temporal_info(event_rate, occupancy, gpu=False):
 def calculate_temporal_info_shuffle(running_calcium_map_img,
                                     running_time_map_img,
                                     running_distance_map_img,
-                                    occupancy,
-                                    n_time_bins,
                                     shuff_times=1000,
                                     min_shift=450,  # 15s at 30Hz
                                     gpu=True,
@@ -251,6 +320,11 @@ def calculate_temporal_info_shuffle(running_calcium_map_img,
     """
     Compute shuffled temporal information by circular shifting calcium traces.
 
+    For each shuffle, per-cell event rate / occupancy are recomputed from
+    valid laps only (dropping laps where a NaN bin falls on a visited time
+    bin — i.e. case 1 / extreme dFF). Trailing NaNs from short laps are
+    tolerated.
+
     Parameters:
     -----------
     running_calcium_map_img : ndarray (n_cells, n_frames)
@@ -259,10 +333,6 @@ def calculate_temporal_info_shuffle(running_calcium_map_img,
         Time at each running frame
     running_distance_map_img : ndarray (n_frames,)
         Distance at each running frame
-    occupancy : ndarray (n_time_bins,)
-        Frame count per time bin
-    n_time_bins : int
-        Number of time bins
     shuff_times : int
         Number of shuffle iterations
     min_shift : int
@@ -306,18 +376,25 @@ def calculate_temporal_info_shuffle(running_calcium_map_img,
         else:
             calcium_shuff_np = vectorized_roll(calcium_gpu, shift_amounts[i], xp=np)
 
-        # Re-bin the shuffled calcium traces
-        _, event_rate_shuff, _, _, _, _ = temporal_binning(
+        # Re-bin shuffled traces, keeping per-lap profile so we can exclude
+        # invalid laps after the shift
+        _, _, _, per_lap_profile_shuff, per_lap_occupancy_shuff, _, _ = temporal_binning(
             calcium_shuff_np, running_time_map_img, running_distance_map_img,
             track_length=track_length, time_bin_size=time_bin_size,
             max_lap_duration_s=max_lap_duration_s, frame_rate=frame_rate,
-            save_lap_profile=False
+            save_lap_profile=True,
         )
 
-        if len(event_rate_shuff) > 0:
-            shuffled_TI[:, i] = calculate_temporal_info(event_rate_shuff, occupancy, gpu=gpu)
-        else:
+        if len(per_lap_profile_shuff) == 0:
             shuffled_TI[:, i] = np.nan
+            continue
+
+        # Per-cell event_rate / occupancy from valid laps only
+        _, event_rate_valid, occupancy_valid = compute_valid_event_rate(
+            per_lap_profile_shuff, per_lap_occupancy_shuff
+        )
+
+        shuffled_TI[:, i] = calculate_temporal_info(event_rate_valid, occupancy_valid, gpu=gpu)
 
     return shuffled_TI
 
@@ -611,12 +688,22 @@ if __name__ == '__main__':
             continue
 
         # Temporal binning
-        event_count_raw, event_rate_raw, occupancy_raw, per_lap_profile, n_time_bins, median_lap_duration_s = temporal_binning(
+        event_count_raw, event_rate_raw, occupancy_raw, per_lap_profile, per_lap_occupancy, n_time_bins, median_lap_duration_s = temporal_binning(
             running_calcium_map_img, running_time_map_img, running_distance_map_img,
             time_bin_size=time_bin_size, frame_rate=frame_rate
         )
 
         print(f"  n_time_bins: {n_time_bins}, median_lap_duration: {median_lap_duration_s:.2f}s")
+
+        # Per-cell event rate / occupancy from valid laps only (drop laps
+        # with a NaN bin where occupancy > 0 — i.e. extreme dFF mid-lap).
+        valid_trials_mask = ~np.any(
+            np.isnan(per_lap_profile) & (per_lap_occupancy[None, :, :] > 0),
+            axis=-1,
+        )
+        _, event_rate_valid, occupancy_valid = compute_valid_event_rate(
+            per_lap_profile, per_lap_occupancy, valid_trials_mask
+        )
 
         # Detect time fields
         df_time_field = detect_time_field(
@@ -630,8 +717,8 @@ if __name__ == '__main__':
         total_active_frames = np.sum(running_calcium_map_img > 0, axis=-1)
         df_time_field['total_active_frames'] = total_active_frames
 
-        # Compute temporal information
-        temporal_information = calculate_temporal_info(event_rate_raw, occupancy_raw)
+        # Compute temporal information from valid trials only
+        temporal_information = calculate_temporal_info(event_rate_valid, occupancy_valid)
         df_time_field['temporal_information_bits'] = temporal_information
 
         # Store metadata

@@ -12,12 +12,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.stats import skew, pearsonr
-from scipy.ndimage import gaussian_filter1d
-
+from scipy.ndimage import gaussian_filter1d, binary_dilation
 from common.utils_basic import run_of_ones
 from common.mask.neuropil_mask import fiber_block_to_neuropil_masks
 # from common.mask.utils_mask import load_axon_mask, generate_adaptive_membrane_mask, plot_membrane_mask, axon_mask_dilation, axon_mask_dilation_grid_free, dlight_regressor_mask_grid_free, dlight_regressor_mask
 import common.mask.utils_mask as utl
+from common.plotting_functions_Jingyu import plot_random_dff_traces
 
 
 classification_thresholds = {
@@ -37,6 +37,8 @@ classification_thresholds = {
 def generate_axon_dlight_masks_wrap(
                         mean_img_red, mean_img_green,
                         path_result=None,
+                        p_fiber_masks=None,
+                        fiber_mask_name=None,
                         dilation_steps = (0, 2, 4, 6, 8, 10),
                         grid_size = 16,
                         dilation_method = 'binary',
@@ -46,7 +48,11 @@ def generate_axon_dlight_masks_wrap(
                         visualize_regressor = False
                         ):
     path_result = Path(path_result)
-    axon_mask = utl.load_axon_mask(path_result)
+    if p_fiber_masks is None:
+        p_fiber_masks = path_result
+    if fiber_mask_name is None:
+        fiber_mask_name = 'ch2_FOV.npy_ROI_dict_selected.npy'
+    axon_mask = utl.load_axon_mask(p_fiber_masks, fiber_mask_name)
     # create enchanced dlight mask and visualize
     print('creating enchanced dlight mask and visualize...')
     base_mask, global_dlight_mask_enhanced, fig = utl.generate_adaptive_membrane_mask(
@@ -123,7 +129,68 @@ def generate_axon_dlight_masks_wrap(
                                       fig_out=path_result
                                       )
 
+def generate_Rdlight_masks_wrap(
+                        mean_img_red, mean_img_green,
+                        path_result=None,
+                        dilation_steps = (0, ),
+                        grid_size = 16,
+                        neu_pix = 3,
+                        dilation_method = 'binary',
+                        constrain_to_grid = False,
+                        ):
+    path_result = Path(path_result)
+    # create enchanced dlight mask and visualize
+    print('creating enchanced green channel mask and visualize...')
+    base_mask_green, global_green_mask_enhanced, fig = utl.generate_adaptive_membrane_mask(
+        mean_img_green,
+        gaussian_sigma=1,
+        adaptive_block_size=21,
+        valley_radius=8,        # ~3–4 µm footprint
+        uniformity_thresh=2.5,      # ↑ for stricter "neropil-like"
+        z_tau=2.2,              # ↑ for more selective neuropil
+        min_region_size=100,
+        hole_size_threshold=150,
+    )
+    np.save(path_result / 'global_green_mask_enhanced,.npy', global_green_mask_enhanced,)
+    plt.savefig(path_result / 'global_green_mask_enhanced_generation.png', dpi=200)
+    plt.close()
+    utl.plot_membrane_mask(mean_img_green, 
+                       base_mask_green, global_green_mask_enhanced,
+                       path_result/'green_mask_enhanced.png',
+                       ref_ch = 'mean_EYFP',
+                       vmin = 1,
+                       vmax = 95)
+    print('creating enchanced red channel mask and visualize...')
+    base_mask_red, global_red_mask_enhanced, fig = utl.generate_adaptive_membrane_mask(
+        mean_img_red,
+        gaussian_sigma=1,
+        adaptive_block_size=21,
+        valley_radius=6,        # ~3–4 µm footprint
+        uniformity_thresh=2.8,      # ↑ for stricter "neropil-like"
+        z_tau=3,              # ↑ for more selective neuropil
+        min_region_size=100,
+        hole_size_threshold=150,
+    )
+    np.save(path_result / 'global_red_mask_enhanced.npy', global_red_mask_enhanced,)
+    plt.savefig(path_result / 'global_red_mask_enhanced_generation.png', dpi=200)
+    plt.close()
+    utl.plot_membrane_mask(mean_img_red, 
+                       base_mask_red, global_red_mask_enhanced,
+                       path_result/'red_mask_enhanced.png',
+                       ref_ch = 'mean_RdLight',
+                       vmin = 1,
+                       vmax = 95)
     
+    dilated_dlight_mask = binary_dilation(global_red_mask_enhanced, iterations=neu_pix)
+
+    regressor_mask = (dilated_dlight_mask)&(~global_red_mask_enhanced)
+                       # &(global_green_mask_enhanced))
+    # save masks
+    utl.save_mask(regressor_mask, path_result, filebase='Rdlight_regressor')
+    
+    
+    
+        
 def generate_geco_dlight_masks_wrap(mean_img_red, mean_img_green,
                              path_result,
                              ):
@@ -169,6 +236,8 @@ def generate_geco_dlight_masks_wrap(mean_img_red, mean_img_green,
 
 def extract_axon_dlight_masks(rec, p_mask_result, dilation_steps,
                               constrain_to_grid=True,
+                              p_fiber_masks=None,
+                              fiber_mask_name=None,
                               visualize_neu = False,
                               visualize_dilation = False,
                               visualize_regressor = False):
@@ -183,6 +252,8 @@ def extract_axon_dlight_masks(rec, p_mask_result, dilation_steps,
     
     generate_axon_dlight_masks_wrap(mean_img_red, mean_img_green,
                                     p_mask_result,
+                                    p_fiber_masks=p_fiber_masks,
+                                    fiber_mask_name=fiber_mask_name,
                                     dilation_steps = dilation_steps,
                                     dilation_method = 'binary',
                                     constrain_to_grid = constrain_to_grid,
@@ -192,7 +263,7 @@ def extract_axon_dlight_masks(rec, p_mask_result, dilation_steps,
  
 def select_geco_rois(mean_img, F_corr, stat_array, path_result='',
                       thresholds=classification_thresholds):
-    # mean_img: reference mean image of GCaMP
+    # mean_img: reference mean image of GECO
     # F_corr: np array, (n_rois, n_frames) F_raw-0.7*Fneu corrected F trace fo all rois
     print('selecting active soma masks...')
     global_soma_mask = np.load(path_result / 'global_geco_mask_enhanced.npy') 
@@ -225,7 +296,7 @@ def select_geco_rois(mean_img, F_corr, stat_array, path_result='',
     
     return is_soma, is_active, is_active_soma
 
-def plot_geco_selection(F_corr, mean_img, suite2p_stat,
+def plot_roi_selection(mean_img, suite2p_stat,
                         is_soma, is_active, is_active_soma,
                         out_dir_fig):
     n_rois = len(suite2p_stat)
@@ -251,14 +322,18 @@ def plot_geco_selection(F_corr, mean_img, suite2p_stat,
     plt.close()
     
     
-def extract_geco_dlight_masks(rec, p_masks, classification_thresholds=classification_thresholds):
+def extract_geco_dlight_masks(rec, p_masks, 
+                              p_suite2p = None,
+                              classification_thresholds=classification_thresholds):
     p_masks = Path(p_masks)
-    p_rec = r"Z:\Jingyu\2P_Recording\{}\{}\{}\{}".format(rec[:5], 
-                                                        rec[:-3], 
-                                                        rec[-2:],
-                                                        'nonrigid_reg_geco')
-    
-    p_suite2p = Path(p_rec+r'\suite2p_anat_detec\plane0')
+    if p_suite2p is None:
+        p_rec = r"Z:\Jingyu\2P_Recording\{}\{}\{}\{}".format(rec[:5], 
+                                                            rec[:-3], 
+                                                            rec[-2:],
+                                                            'nonrigid_reg_geco')
+        p_suite2p = Path(p_rec+r'\suite2p_anat_detec\plane0')
+    else:
+        p_suite2p = Path(p_suite2p)
     suite2p_ops = np.load(p_suite2p / 'ops.npy', allow_pickle=True).item()
     mean_img_green = suite2p_ops['meanImg_chan2']
     mean_img_red = suite2p_ops['meanImg']
@@ -282,9 +357,9 @@ def extract_geco_dlight_masks(rec, p_masks, classification_thresholds=classifica
     )
     
     test_fig_dir = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\geco_dlight\TEST_PLOTS\GECO_active_soma_selection_validation")
-    plot_geco_selection(F_corr, mean_img_red, suite2p_stat,
-                            is_soma, is_active, is_active_soma,
-                            out_dir_fig=test_fig_dir/f'{rec}_geco_soma_selection.png')
+    plot_roi_selection(mean_img_red, suite2p_stat,
+                        is_soma, is_active, is_active_soma,
+                        out_dir_fig=test_fig_dir/f'{rec}_geco_soma_selection.png')
     plot_random_dff_traces(gaussian_filter1d(F_corr[is_active_soma], 1),
                            title='active_soma_traces',
                            out_path_fig=test_fig_dir/f'{rec}_active_soma_traces.png')
@@ -294,23 +369,39 @@ def extract_geco_dlight_masks(rec, p_masks, classification_thresholds=classifica
 
     
 
-def select_gcamp_rois(mean_img, F_corr, stat_array, path_result='',
-                      thresholds=classification_thresholds):
+def select_gcamp_rois(mean_img,
+                      F_corr,
+                      stat_array,
+                      path_result='',
+                      thresholds=None,):
+    
+    # Use defaults, then override any provided values
+    thresholds = {
+        **classification_thresholds,
+        **(thresholds or {})
+    }
     # mean_img: reference mean image of GCaMP
     # F_all: np array, (n_rois, n_frames) F_raw-0.7*Fneu corrected F trace fo all rois
     path_result = Path(path_result)
     mean_img_clip = np.clip(mean_img,
                             a_min = np.percentile(mean_img, 5),
                             a_max = np.percentile(mean_img, 98))
-    base_mask, global_soma_mask = utl.generate_adaptive_membrane_mask(mean_img_clip,
-                                  uniformity_threshold=0.27,
+    base_mask, global_soma_mask, fig = utl.generate_adaptive_membrane_mask(
+                                  # mean_img_clip,
+                                  # uniformity_threshold=0.27,
+                                  # min_region_size=100,
+                                  # hole_size_threshold=100,
+                                  # output_dir= path_result/'Adaptive_geco_Mask_Generation.png'
+                                  
+                                  mean_img_clip,
+                                  gaussian_sigma=1,
+                                  adaptive_block_size=21,
+                                  valley_radius=6,        # ~3–4 µm footprint
+                                  uniformity_thresh=6,      # ↑ for stricter "neropil-like"
+                                  z_tau=3,              # ↑ for more selective neuropil
                                   min_region_size=100,
                                   hole_size_threshold=100,
-                                  output_dir= path_result/'Adaptive_geco_Mask_Generation.png')
-    if path_result:
-        path_result = Path(path_result)
-        np.save(path_result / 'global_gcamp_soma_mask.npy', global_soma_mask)
-    
+                                  )
     # anatomical features
     roi_npix    = np.array([r['npix'] for r in stat_array])
     hollowness_scores = utl.calculate_rois_hollowness(stat_array=stat_array, soma_mask=global_soma_mask)
@@ -337,7 +428,19 @@ def select_gcamp_rois(mean_img, F_corr, stat_array, path_result='',
                  (conti_act_frames_max < thresholds['max_act_frames']))
     is_active_soma = (is_soma)&(is_active)
     
+    plot_roi_selection(mean_img, stat_array,
+                            is_soma, is_active, is_active_soma,
+                            out_dir_fig=path_result / 'roi_selection_soma_mask.png')
     
+    if path_result:
+        path_result = Path(path_result)
+        np.save(path_result / 'global_gcamp_soma_mask.npy', global_soma_mask)
+        plt.savefig(path_result / 'global_gcamp_soma_mask.png', dpi=200)
+        plt.close()
+        
+        np.savez(path_result /'soma_label.npz', is_soma=is_soma, is_active=is_active, 
+                 is_active_soma=is_active_soma)
+        
     return is_soma, is_active, is_active_soma
 
 # Helper function to overlay grid lines
@@ -352,9 +455,11 @@ def overlay_grid(ax, shape, grid_size):
 if __name__ == "__main__":
     import shutil
     from tqdm import tqdm
-    from common.plotting_functions_Jingyu import plot_random_dff_traces
-    exp = 'Dbh_dlight'
+    
+    
+    # exp = 'Dbh_dlight'
     # exp = 'geco_dlight'
+    exp = 'RdLight'
     
     if exp == 'Dbh_dlight':
         
@@ -417,6 +522,26 @@ if __name__ == "__main__":
             if not os.path.exists(p_mask_result):
                 os.makedirs(p_mask_result)
             extract_geco_dlight_masks(rec, p_mask_result)
+            
+    elif exp == 'RdLight':
+        rec = 'AC319-20260322-02'
+        print(f'\nProcessing {rec}...')
+        p_mask_result = Path(rf"Z:\Jingyu\rdlight_raw_data\regression_res\{rec}\masks")
+        # shutil.rmtree(p_mask_result)
+        if not p_mask_result.exists():
+            p_mask_result.mkdir(parents=True)
+        
+        p_rec = r"Z:\Jingyu\2P_Recording\{}\{}\{}\{}".format(rec[:5], 
+                                                            rec[:-3], 
+                                                            rec[-2:],
+                                                            'nonrigid_reg')
+        p_data = p_rec+r'\suite2p\plane0'
+        suite2p_ops = np.load(p_data+r'\ops.npy', allow_pickle=True).item()
+        mean_img_red = suite2p_ops['meanImg_chan2']
+        mean_img_green = suite2p_ops['meanImg']
+        
+        generate_Rdlight_masks_wrap(mean_img_red, mean_img_green, p_mask_result,)
+        
             
         
     

@@ -10,7 +10,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from scipy.stats import binomtest, ttest_1samp
 from common import plotting_functions_Jingyu as pf
-from dlight_imaging.regression.utils_regression import get_axon_grids
+# from dlight_imaging.regression.utils_regression import get_axon_grids
 save_fig = pf.save_fig
 pf.mpl_formatting()
 #%% PATHS AND PARAMS
@@ -19,7 +19,7 @@ OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\Dbh_dlight")
 OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res_grid_free_dilation'
 OUT_DIR_DF = OUT_DIR_RAW_DATA/'processed_dataframe_grid_free_dilation'
 OUT_DIR_FIG = Path(r"Z:\Jingyu\LC_HPC_manuscript\fig_Dbh_dlight")
-save_plot=1
+save_plot=0
 
 dlight_pre  = (-1, 0)
 dlight_post = (0, 1)

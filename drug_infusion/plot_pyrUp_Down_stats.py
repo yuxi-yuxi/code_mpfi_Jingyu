@@ -31,9 +31,9 @@ def profile_is_valid(x):
 #%% PATHS AND PARAMS
 
 # session list 
-# drug = 'SCH'
+drug = 'SCH'
 # drug = 'prazosin'
-drug = 'propranolol'
+# drug = 'propranolol'
 
 import rec_lst_infusion as recs
 if drug=='SCH':
@@ -61,21 +61,23 @@ thresh_up = 1.12
 thresh_down = 1/thresh_up
 
 prof_col_heatmap = 'mean_profile_valid'
-prof_col_trace = 'mean_profile_zscore_valid'
+# prof_col_trace = 'mean_profile_zscore_valid'
+prof_col_trace = 'mean_profile_valid'
 ratio_col = pyrUp_by
 
 thresh_baseline = 8.5
 h=np.inf # no upper bound
 
+DRD1_ONLY = 0
 
 # PATHS
 OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion")
 OUTPUT_RES = OUT_DIR_RAW_DATA / "processed_dataframe"
 # OUTPUT_RES = OUT_DIR_RAW_DATA /'processed_dataframe_new_good'
-OUT_DIR_FIG = Path(r"Z:\Jingyu\LC_HPC_manuscript\fig_infusion")/drug
+OUT_DIR_FIG = Path(r"Z:\Jingyu\LC_HPC_manuscript\fig_infusion_0625")/drug
 if not OUT_DIR_FIG.exists():
     OUT_DIR_FIG.mkdir(parents=True)
-save_plot=1
+save_plot=0
 
 #%% data pooling
 df_drug_pool = pd.DataFrame()
@@ -160,14 +162,17 @@ df_ctrl_pool_pyr = df_ctrl_pool_pyr.set_index(['anm', 'date']).loc[valid_recs].r
 # Select only the first 3 recording dates per animal for ctrl
 df_drug_pool_pyr_first3 = df_drug_pool_pyr.loc[df_drug_pool_pyr[f'{drug}_days']<4]
 df_drug_pool_pyr = df_drug_pool_pyr_first3
-df_drug_pool_pyr.to_parquet(OUTPUT_RES/ rf"df_drug_pool_pyr_first3_{drug}.parquet")
+df_drug_pool_pyr.to_parquet(OUTPUT_RES/ rf"df_drug_pool_pyr_first3_{drug}_0625.parquet")
 
 animals_in_drug = df_drug_pool_pyr_first3['anm'].unique()
 df_ctrl_pool_pyr_first3 = df_ctrl_pool_pyr.loc[(df_ctrl_pool_pyr['ctrl_days']<4)&
                                                (df_ctrl_pool_pyr['anm'].isin(animals_in_drug))]
 df_ctrl_pool_pyr = df_ctrl_pool_pyr_first3
-df_ctrl_pool_pyr.to_parquet(OUTPUT_RES/ rf"df_ctrl_pool_pyr_first3_{drug}.parquet")
+df_ctrl_pool_pyr.to_parquet(OUTPUT_RES/ rf"df_ctrl_pool_pyr_first3_{drug}_0625.parquet")
 
+if DRD1_ONLY:
+    df_drug_pool_pyr = df_drug_pool_pyr.loc[df_drug_pool_pyr['drd1+']]
+    df_ctrl_pool_pyr = df_ctrl_pool_pyr.loc[df_ctrl_pool_pyr['drd1+']]
 #% plot heatmap
 # drug sessions
 rec_id =  f'{drug}-drug'
@@ -224,8 +229,8 @@ for cell_type in ['pyrUp', 'pyrDown']:
                                          ax=ax,
                                          test='ranksum',
                                          time_windows=time_windows,
-                                         # baseline_window = pre_window,
-                                         baseline_window = None,
+                                         baseline_window = pre_window,
+                                         # baseline_window = None,
                                          labels = ['baseline', f'{drug}'],
                                          colors = ['steelblue', 'orange'],
                                          scalebar_dff=dffbar,
@@ -415,11 +420,12 @@ df_perc_ctrl = grouped.apply(
     }), include_groups=False
 ).reset_index()
 
+
 for cell_type, ylim in zip(['pyrUp', 'pyrDown'], [(0, 65), (0, 65)]):
     
     # drug sessions
     fig, ax = plt.subplots(figsize=(2, 3), dpi=300)    
-    pf.plot_bar_with_paired_scatter(ax, 100*df_perc_drug[f'perc_{cell_type}_ss1'], 100*df_perc_drug[f'perc_{cell_type}_ss2'],
+    res_drug = pf.plot_bar_with_paired_scatter(ax, 100*df_perc_drug[f'perc_{cell_type}_ss1'], 100*df_perc_drug[f'perc_{cell_type}_ss2'],
                                     ylabel=f'% {cell_type}',
                                     colors=['steelblue', 'orange'],
                                     xticklabels=['baseline', f'{drug}'],
@@ -429,7 +435,7 @@ for cell_type, ylim in zip(['pyrUp', 'pyrDown'], [(0, 65), (0, 65)]):
 
     # ctrl sessions
     fig, ax = plt.subplots(figsize=(2, 3), dpi=300)    
-    pf.plot_bar_with_paired_scatter(ax, 100*df_perc_ctrl[f'perc_{cell_type}_ss1'], 100*df_perc_ctrl[f'perc_{cell_type}_ss2'],
+    res_ctrl = pf.plot_bar_with_paired_scatter(ax, 100*df_perc_ctrl[f'perc_{cell_type}_ss1'], 100*df_perc_ctrl[f'perc_{cell_type}_ss2'],
                                     ylabel=f'% {cell_type}',
                                     colors=['steelblue', 'grey'],
                                     xticklabels=['baseline', f'saline({drug})'],
@@ -439,19 +445,22 @@ for cell_type, ylim in zip(['pyrUp', 'pyrDown'], [(0, 65), (0, 65)]):
 
     # saline vs drug sessions
     fig, ax = plt.subplots(figsize=(2, 3), dpi=300)    
-    pf.plot_bar_with_unpaired_scatter(ax, 100*df_perc_ctrl[f'perc_{cell_type}_ss2'], 100*df_perc_drug[f'perc_{cell_type}_ss2'],
+    res_ctrl_drug = pf.plot_bar_with_unpaired_scatter(ax, 100*df_perc_ctrl[f'perc_{cell_type}_ss2'], 100*df_perc_drug[f'perc_{cell_type}_ss2'],
                                     ylabel=f'% {cell_type}',
                                     colors=['grey', 'orange'],
-                                    xticklabels=['saline', f'{drug}'])
+                                    xticklabels=['saline', f'{drug}'],
+                                    ylim = (-15, 15))
     save_fig(fig, OUT_DIR_FIG, fig_name=f'perc_{cell_type}_saline_{drug}', save=save_plot)
 
 
     # Δ% to baseline
     fig, ax = plt.subplots(figsize=(2, 3), dpi=300)    
-    pf.plot_bar_with_unpaired_scatter(ax, 100*df_perc_ctrl[f'delta_perc_{cell_type}'], 100*df_perc_drug[f'delta_perc_{cell_type}'],
+    res_delta = pf.plot_bar_with_unpaired_scatter(ax, 100*df_perc_ctrl[f'delta_perc_{cell_type}'], 100*df_perc_drug[f'delta_perc_{cell_type}'],
                                     ylabel=f'Δ% {cell_type} (vs baseline)',
                                     colors=['grey', 'orange'],
-                                    xticklabels=[f'saline ({drug})', f'{drug}'])
+                                    xticklabels=[f'saline ({drug})', f'{drug}'],
+                                    ylim = (-15, 15))
+    print(f'{cell_type}: {res_delta}')
     save_fig(fig, OUT_DIR_FIG, fig_name=f'delt_perc_{cell_type}_saline_{drug}', save=save_plot)
 
 

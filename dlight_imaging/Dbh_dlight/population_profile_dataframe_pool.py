@@ -68,19 +68,20 @@ thresh_baseline_red    = 1
 regression_name ='single_trial_regression'
 
 # DILATION_STEPS = (0, 2, 4, 6, 8, 10)
-DILATION_STEPS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+# DILATION_STEPS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+DILATION_STEPS = (0, )
 #%% collect roi profile for all sessions
 for k in DILATION_STEPS:
     df_pool_all = pd.DataFrame()
-    for rec in rec_lst[:1]:
+    for rec in rec_lst:
         print(f'loading: {rec}--------------------------------------------------')
         anm, date, ss = rec.split('-')
         # data path
         p_data = r"Z:\Jingyu\2P_Recording\{}\{}\{}\RegOnly".format(anm, f'{anm}-{date}', ss)
         p_regression = (OUR_DIR_REGRESS / rec / regression_name 
                         / f'dilation_k={k}')
-        p_stats = OUT_DIR_DF / f'{rec}_profile_dilation={k}_stat_dlight_pre{dlight_pre}_post{dlight_post}_test.parquet'
-        p_stats_red = OUT_DIR_DF / f'{rec}_profile_dilation={k}_stat_red_pre{dlight_pre}_post{dlight_post}_test.parquet'
+        p_stats = OUT_DIR_DF / f'{rec}_profile_dilation={k}_stat_dlight_pre{dlight_pre}_post{dlight_post}.parquet'
+        p_stats_red = OUT_DIR_DF / f'{rec}_profile_dilation={k}_stat_red_pre{dlight_pre}_post{dlight_post}.parquet'
         p_masks = OUR_DIR_REGRESS / rec / 'masks'
         
         # load dlight dataframe
@@ -102,7 +103,9 @@ for k in DILATION_STEPS:
         roi_red_baseline = baseline_red[ys, xs, :]   # shape (n_rois, frames)
         roi_stats['baseline_red_min'] = np.nanmin(roi_red_baseline, axis=-1)
         roi_stats['baseline_dlight_min'] = np.nanmin(roi_dlight_baseline, axis=-1)
-        
+        roi_stats['baseline_red_mean'] = np.nanmean(roi_red_baseline, axis=-1)
+        roi_stats['baseline_dlight_mean'] = np.nanmean(roi_dlight_baseline, axis=-1)
+
         # load masks
         global_axon_mask = np.load(p_masks / f'dilated_global_axon_k={k}.npy')
         global_dlight_mask = np.load(p_masks / 'global_dlight_mask_enhanced.npy')
@@ -153,12 +156,12 @@ for k in DILATION_STEPS:
                                   effect_size_thresh)
         
         # save per session dataframe
-        p_df_out = OUT_DIR_DF / rf"{rec}_profile_combined_dilation={k}_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}_test.parquet"
+        p_df_out = OUT_DIR_DF / rf"{rec}_profile_combined_dilation={k}_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}_0621.parquet"
         roi_stats.to_parquet(p_df_out)
         
         # add to dataframe pool
         df_pool_all = pd.concat((df_pool_all, roi_stats))
         
     # save pooled dataframes
-    # p_pooled_df = OUT_DIR_DF/ rf"df_population_profile_pooled_dilation={k}_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}.parquet"
-    # df_pool_all.to_parquet(p_pooled_df)
+    p_pooled_df = OUT_DIR_DF/ rf"df_population_profile_pooled_dilation={k}_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}_0621.parquet"
+    df_pool_all.to_parquet(p_pooled_df)

@@ -48,21 +48,50 @@ def send_notification(subject, message, to_email=to_email, from_email=from_email
 # f_out_df_selected = r"Z:\Jingyu\Code\dlight_imgaing\{}\df_behaviour_info_selected_new.pkl".format(exp)
 # df_selected = pd.read_pickle(f_out_df_selected)
 # rec_lst = df_selected.index.tolist()
+# from Rdlight_imaging.rec_lst import all_rec
 rec_lst = [
-'AC319-20260323-02',
-'AC319-20260323-04',
-'AC319-20260323-06', 
+# 'AC319-20260323-02',
+# 'AC319-20260323-04',
+# 'AC319-20260323-06',
+# 'AC319-20260326-02',
+# 'AC319-20260326-04',
+# 'AC319-20260327-02',
+# 'AC319-20260327-04',
            ]
-exp = r'EYFP_RdLight'
+# exp = r'EYFP_RdLight'
+
+exp = r'axon_dlight'
+all_rec = [
+# 'AC324-20260527-02',
+# 'AC324-20260528-02',
+# 'AC324-20260529-02',
+# 'AC324-20260530-02',
+# 'AC324-20260531-02',
+
+# 'AC325-20260527-02',
+# 'AC325-20260528-02',
+# 'AC325-20260529-02',
+# 'AC325-20260530-02',
+# 'AC325-20260531-02',
+
+# 'AC326-20260527-02',
+# 'AC326-20260528-02',
+# 'AC326-20260529-02',
+# 'AC326-20260530-02',
+# 'AC326-20260531-02',  
+
+'AD191-20260713-02',  
+'AD192-20260714-02',       
+    ]
 #%% params and sessions
 # ops = np.load(r"Z:\Jingyu\2P_Recording\AC918\AC918-20231028\04\ROI_detection_test_2.0\suite2p\plane0\ops.npy", allow_pickle=True).item()
-ops = np.load(r"Z:\Jingyu\2P_Recording\suite2p_ops\RegOnly.npy", allow_pickle=True).item()
+ops = np.load(r"Z:\Jingyu\Code\suite2p_ops\RegOnly.npy", allow_pickle=True).item()
 
 ops['do_registration']=1
-ops['roidetect'] = 0
+# ops['roidetect'] = 0
 ops['reg_tif']=1
 ops['reg_tif_chan2']=1
-ops['align_by_chan']= 1 # align by dLight channel, Jingyu, 5/30/2025
+# ops['align_by_chan']= 1 # align by dLight channel, Jingyu, 5/30/2025
 ops['nonrigid']=1
 ops['do_bidiphase']=1
 # ops['smooth_sigma']=1.15
@@ -71,6 +100,10 @@ ops['do_bidiphase']=1
 # ops['block_size'] = (64, 64)
 # ops['snr_thresh'] = 1.2
 
+if exp == r'axon_dlight':
+    ops['align_by_chan'] = 1# align by dLight channel, Jingyu, 5/30/2025
+    ops['roidetect'] = 0
+    
 # exp='axon-GCaMP_RdLight'
 if exp == r'dlight_GECO_Ai14_Dbh':
    # ops = np.load(r"Z:\Jingyu\2P_Recording\suite2p.npy", allow_pickle=True).item()
@@ -97,7 +130,7 @@ if exp==r'EYFP_RdLight':
 #%% Main
 reg_lst = []
 reg_f_lst = []
-for s in rec_lst:
+for s in all_rec:
     try:
         
         anm = s[:5]
@@ -109,7 +142,7 @@ for s in rec_lst:
                 
         p_out = p_data + r'\nonrigid_reg'
         
-        if os.path.exists(p_out+r'\suite2p\plane0\stat.npy') == False:
+        if os.path.exists(p_out+r'\suite2p\plane0\ops.npy') == False:
             os.makedirs(p_out, exist_ok=True)
             # ops['path_roi_iterations'] = p_outops['save_path0']
             ops['save_path0'] = p_out

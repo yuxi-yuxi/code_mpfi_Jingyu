@@ -151,8 +151,8 @@ def calculate_trial_correlations_gpu(per_lap_profiles, methods=None, gpu=True):
         if n_laps < 2 or n_bins < 3:
             continue
 
-        # Remove laps with all NaN values
-        valid_laps = ~np.all(np.isnan(per_lap), axis=1)
+        # Exclude laps with any NaN bin (invalid trials — e.g. dFF thresholded out)
+        valid_laps = ~np.any(np.isnan(per_lap), axis=1)
         per_lap = per_lap[valid_laps]
         n_laps = per_lap.shape[0]
 

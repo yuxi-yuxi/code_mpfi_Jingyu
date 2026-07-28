@@ -30,16 +30,16 @@ OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res_grid_free_dilation'
 OUT_DIR_FIG = ''
 regression_name ='single_trial_regression'
 # DILATION_STEPS = (0, 2, 4, 6, 8, 10)
-# DILATION_STEPS = (0, 1) # for testing
+DILATION_STEPS = (0, ) # for testing
 # DILATION_STEPS = ( 1, 3, 5, 7, 9)
-DILATION_STEPS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+# DILATION_STEPS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 dlight_pre  = (-1, 0)
 dlight_post = (0, 1)
 #%%
 # rec_lst = ['AC969-20250319-04', ] # for testing
 # rec_lst = ['AC964-20250131-02', ] # for testing
 # rec_lst = ['AC969-20250326-04', ] # for example ROI
-for rec in tqdm(rec_lst[:1]):
+for rec in tqdm(rec_lst):
     print(f'\nprocessing {rec}...')
     # load run-onset event frames
     p_beh_file = OUT_DIR_RAW_DATA / 'behaviour_profile' / f'{rec}.pkl'
@@ -126,8 +126,8 @@ for rec in tqdm(rec_lst[:1]):
                                                             'pre_event_window':  2, # seconds
                                                             'post_event_window': 4 }
                                             )
-        df_roi_stats.to_parquet(out_dir / f'{rec}_profile_dilation={k_size}_stat_dlight_pre{dlight_pre}_post{dlight_post}_test.parquet' )
-        df_roi_stats_red.to_parquet(out_dir / f'{rec}_profile_dilation={k_size}_stat_red_pre{dlight_pre}_post{dlight_post}_test.parquet')
+        df_roi_stats.to_parquet(out_dir / f'{rec}_profile_dilation={k_size}_stat_dlight_pre{dlight_pre}_post{dlight_post}.parquet' )
+        df_roi_stats_red.to_parquet(out_dir / f'{rec}_profile_dilation={k_size}_stat_red_pre{dlight_pre}_post{dlight_post}.parquet')
     
         
         

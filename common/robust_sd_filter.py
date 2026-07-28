@@ -6,9 +6,12 @@ Created on Sun Jul 27 21:24:47 2025
 """
 from scipy.stats import sem, median_abs_deviation
 from scipy.ndimage import median_filter, gaussian_filter1d
-from cupyx.scipy.ndimage import gaussian_filter1d as cp_gaussian_filter1d
 import numpy as np
-import cupy as cp
+try:
+    import cupy as cp
+    from cupyx.scipy.ndimage import gaussian_filter1d as cp_gaussian_filter1d
+except:
+    print('CUPY is not installed')
 import matplotlib.pyplot as plt
 
 def cp_median_abs_deviation(x, axis=None, nan_policy='omit'):

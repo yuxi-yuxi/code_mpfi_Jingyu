@@ -138,7 +138,7 @@ for rec in rec_lst:
     p_suite2p_geco      = Path(rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\nonrigid_reg_geco\suite2p_anat_detec\plane0")
     p_stats             = OUT_DIR_RAW_DATA / 'processed_dataframe' / f'{rec}_profile_stat_dlight_pre{dlight_pre}_post{dlight_post}.parquet'
     p_stats_geco        = OUT_DIR_RAW_DATA / 'processed_dataframe' / f'{rec}_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet'
-    p_stats_geco_zscore = OUT_DIR_RAW_DATA / 'processed_dataframe_zscore' / f'{rec}_zscore_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet'
+    p_stats_geco_zscore = OUT_DIR_RAW_DATA / 'processed_dataframe_zscore' / f'{rec}_zscore_p5win_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet'
     
     # load dataframes
     dlight_stats = pd.read_parquet(p_stats)
@@ -165,6 +165,9 @@ for rec in rec_lst:
     baseline_dlight = np.load(p_regression / 'baseline_corrected_dlight.npy')
     dlight_stats['baseline_geco_min'] = np.nanmin(baseline_geco, axis=-1)
     dlight_stats['baseline_dlight_min'] = np.nanmin(baseline_dlight, axis=-1)
+    dlight_stats['baseline_geco_mean'] = np.nanmean(baseline_geco, axis=-1)
+    dlight_stats['baseline_dlight_mean'] = np.nanmean(baseline_dlight, axis=-1)
+
     # dlight_stats['baseline_geco_median'] = np.nanmedian(baseline_geco, axis=-1)
     # dlight_stats['baseline_dlight_median'] = np.nanmedian(baseline_dlight, axis=-1)
     # dlight_stats['baseline_geco_max'] = np.nanmax(baseline_geco, axis=-1)
@@ -223,14 +226,14 @@ for rec in rec_lst:
     dlight_stats = dlight_stats.loc[dlight_stats['n_keep_trial']>80]
             
     # save per session dataframe
-    p_df_out = OUT_DIR_RAW_DATA/'processed_dataframe' / rf"{rec}_profile_combined_geco_pre{geco_pre}_geco_post{geco_post}.parquet"
+    p_df_out = OUT_DIR_RAW_DATA/'processed_dataframe' / rf"{rec}_profile_combined_geco_pre{geco_pre}_geco_post{geco_post}_0621.parquet"
     dlight_stats.to_parquet(p_df_out)
     
     # add to dataframe pool
     df_pooled_profile = pd.concat((df_pooled_profile, dlight_stats))
 
 # save pooled dataframes
-p_pooled_df = OUT_DIR_RAW_DATA / 'processed_dataframe'/ rf"df_population_profile_pooled_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}.parquet"
+p_pooled_df = OUT_DIR_RAW_DATA / 'processed_dataframe'/ rf"df_population_profile_pooled_pre{dlight_pre}_post{dlight_post}_ES={effect_size_thresh}_shuff{amp_shuff_thresh_up}_geco_pre{geco_pre}_0621.parquet"
 df_pooled_profile.to_parquet(p_pooled_df)
     
 

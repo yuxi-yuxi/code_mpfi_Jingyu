@@ -6,10 +6,37 @@ Created on Tue Jan 20 11:31:53 2026
 """
 import numpy as np
 from scipy.stats import sem, median_abs_deviation
+try:
+    import cupy as cp
+    from cupyx.scipy.ndimage import gaussian_filter1d, minimum_filter1d, maximum_filter1d, percentile_filter
+except:
+    print('No cupy avaliable')
 
-import cupy as cp
-from cupyx.scipy.ndimage import gaussian_filter1d, minimum_filter1d, maximum_filter1d, percentile_filter
 
+import smtplib
+from email.mime.text import MIMEText
+# Email configuration
+to_email = "Jingyu.Cao@mpfi.org"
+from_email = "midaure@gmail.com"
+smtp_server = "smtp.gmail.com"
+smtp_port = 587
+smtp_username = "midlaure@gmail.com"
+smtp_password = r"bksb vqmz dcqb mseb"
+def send_notification(subject, message, to_email=to_email, from_email=from_email, 
+                      smtp_server=smtp_server, smtp_port=smtp_port, smtp_username=smtp_username, smtp_password=smtp_password):
+    """
+    Sends an email using the provided SMTP server settings.
+    """
+    msg = MIMEText(message)
+    msg['Subject'] = subject
+    msg['From'] = from_email
+    msg['To'] = to_email
+
+    with smtplib.SMTP(smtp_server, smtp_port) as server:
+        server.starttls()  # Secure the connection
+        server.login(smtp_username, smtp_password)
+        server.sendmail(from_email, [to_email], msg.as_string())
+        
 def vectorized_roll(arr, shifts, xp=np):
     """
     Vectorized circular roll: roll each row by a different shift amount.

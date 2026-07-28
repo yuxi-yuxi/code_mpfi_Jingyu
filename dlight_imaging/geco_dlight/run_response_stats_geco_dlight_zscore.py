@@ -39,11 +39,12 @@ dlight_pre  = (-1, 0)
 dlight_post = (0, 1)
 geco_pre  = (-1, 0)
 geco_post = (0.5, 1.5)
+zscore_baseline_window = (-0.5, 0)
 #%%
 # test session
 # rec_lst = ['AC953-20240919-02', ]
 # rec_lst = ['AC991-20250710-04',]
-for rec in tqdm(rec_lst[:23]):
+for rec in tqdm(rec_lst):
     print(f'\nprocessing {rec}...')
     # load run-onset event frames
     p_beh_file = OUT_DIR_RAW_DATA / 'behaviour_profile' / f'{rec}.pkl'
@@ -61,15 +62,16 @@ for rec in tqdm(rec_lst[:23]):
     # loading zscored traces
     if not (p_regression / 'zscored_corrected_dlight.npy').exists():
         print('calculating zscored dlight trace...') 
-        zscored_corrected_dlight, pooled_std_dlight = calculate_zscore_f_trace(corrected_dlight, event_frames=run_onset_frames_valid,
-                                    baseline_window=dlight_pre, response_window=dlight_post,
+        zscored_corrected_dlight, pooled_std_dlight, baseline_all_mean_dlight = calculate_zscore_f_trace(corrected_dlight, event_frames=run_onset_frames_valid,
+                                    baseline_window=zscore_baseline_window, response_window=dlight_post,
                                     pre_event_window=2, post_event_window=4,
                                     imaging_rate=30.0)
-        np.save(p_regression / 'zscored_corrected_dlight.npy', zscored_corrected_dlight)
-        np.save(p_regression / f'baseline{dlight_pre}_std_corrected_dlight.npy', pooled_std_dlight)
+        np.save(p_regression / f'zscored_corrected_dlight_win={zscore_baseline_window}.npy', zscored_corrected_dlight)
+        np.save(p_regression / f'zscore_std_corrected_dlight_win={zscore_baseline_window}.npy', pooled_std_dlight)
+        np.save(p_regression / f'zscore_baseline_mean_corrected_dlight_win={zscore_baseline_window}.npy', baseline_all_mean_dlight)
     else:
         print('loading dlight zscored trace...') 
-        zscored_corrected_dlight = np.load(p_regression / 'zscored_corrected_dlight.npy')
+        zscored_corrected_dlight = np.load(p_regression / f'zscored_corrected_dlight_win={zscore_baseline_window}.npy')
         
     if not (p_regression / 'zscored_geco.npy').exists():
         print('calculating zscored geco trace...') 
@@ -80,15 +82,16 @@ for rec in tqdm(rec_lst[:23]):
         # correct calcium trace with neuropil signal
         geco_trace_corr = geco_trace - 0.7*geco_trace_neu
         
-        zscored_geco, pooled_std_geco = calculate_zscore_f_trace(geco_trace_corr, event_frames=run_onset_frames_valid,
-                                    baseline_window=geco_pre, response_window=geco_post,
+        zscored_geco, pooled_std_geco, baseline_all_mean_geco = calculate_zscore_f_trace(geco_trace_corr, event_frames=run_onset_frames_valid,
+                                    baseline_window=zscore_baseline_window, response_window=geco_post,
                                     pre_event_window=2, post_event_window=4,
                                     imaging_rate=30.0)
-        np.save(p_regression / 'zscored_geco.npy', zscored_geco)
-        np.save(p_regression / f'baseline{geco_pre}_std_corrected_geco.npy', pooled_std_geco)
+        np.save(p_regression / f'zscored_geco_win={zscore_baseline_window}.npy', zscored_geco)
+        np.save(p_regression / f'zscore_std_geco_win={zscore_baseline_window}.npy', pooled_std_geco)
+        np.save(p_regression / f'zscore_baseline_mean_geco_win={zscore_baseline_window}.npy', baseline_all_mean_geco)
     else:
         print('loading geco zscored trace...') 
-        zscored_geco = np.load(p_regression / 'zscored_geco.npy')    
+        zscored_geco = np.load(p_regression / f'zscored_geco_win={zscore_baseline_window}.npy')    
         
     
     #%%
@@ -108,7 +111,7 @@ for rec in tqdm(rec_lst[:23]):
     geco_traces_sm = cp_gaussian_filter1d(cp.array(geco_traces), 
                                                sigma=1).get()
     
-    if not (OUT_DIR / f'{rec}_zscore_profile_stat_dlight_pre{dlight_pre}_post{dlight_post}.parquet' ).exists():
+    if not (OUT_DIR / f'{rec}_zscore_1win_profile_stat_dlight_pre{dlight_pre}_post{dlight_post}_new.parquet' ).exists():
         df_roi_stats = quantify_event_response(corrected_traces = dlight_traces_sm, 
                                             event_frames=run_onset_frames_valid,
                                             baseline_window=dlight_pre, 
@@ -120,10 +123,10 @@ for rec in tqdm(rec_lst[:23]):
                                                             'post_event_window': 4 }
                                             )
         # df_roi_stats.to_parquet(p_regression / f'{rec}_profile_stat_dlight_pre{dlight_pre}_post{dlight_post}.parquet' )
-        df_roi_stats.to_parquet(OUT_DIR / f'{rec}_zscore_profile_stat_dlight_pre{dlight_pre}_post{dlight_post}.parquet' )
+        df_roi_stats.to_parquet(OUT_DIR / f'{rec}_zscore_p5win_profile_stat_dlight_pre{dlight_pre}_post{dlight_post}.parquet' )
         
         
-    if not (OUT_DIR / f'{rec}_zscore_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet').exists():
+    if not (OUT_DIR / f'{rec}_zscore_1win_profile_stat_geco_pre{geco_pre}_post{geco_post}_new.parquet').exists():
         df_roi_stats_red = quantify_event_response(corrected_traces = geco_traces_sm, 
                                             event_frames=run_onset_frames_valid,
                                             baseline_window=geco_pre, 
@@ -136,7 +139,7 @@ for rec in tqdm(rec_lst[:23]):
                                             )
         
         # df_roi_stats_red.to_parquet(p_regression / f'{rec}_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet')
-        df_roi_stats_red.to_parquet(OUT_DIR / f'{rec}_zscore_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet')
+        df_roi_stats_red.to_parquet(OUT_DIR / f'{rec}_zscore_p5win_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet')
     
         
         

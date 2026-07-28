@@ -330,7 +330,7 @@ def calculate_zscore_f_trace(corrected_traces, event_frames,
 
     zscored_traces = zscored_traces.get()
     pooled_std_all = pooled_std_all.get()
-    return zscored_traces, pooled_std_all    
+    return zscored_traces, pooled_std_all, baseline_all_mean    
         
 def calculate_pooled_std_cp(pre_segements, post_segements=None):
     if post_segements is not None:
@@ -373,13 +373,132 @@ def calculate_pooled_std_cp(pre_segements, post_segements=None):
     return pooled_std
 
 
+def _window_to_aligned_frame_bounds(window, pre_event_window,
+                                    post_event_window, imaging_rate,
+                                    window_name):
+    """Convert an event-relative window in seconds to aligned-frame bounds."""
+    if window is None:
+        return None
+    if len(window) != 2:
+        raise ValueError(f"{window_name} must contain exactly (start, end) seconds")
+
+    start_sec, end_sec = (float(window[0]), float(window[1]))
+    if not np.isfinite(start_sec) or not np.isfinite(end_sec):
+        raise ValueError(f"{window_name} values must be finite")
+    if start_sec >= end_sec:
+        raise ValueError(f"{window_name} start must be earlier than its end")
+    if start_sec < -pre_event_window or end_sec > post_event_window:
+        raise ValueError(
+            f"{window_name}={window} falls outside the aligned window "
+            f"(-{pre_event_window}, {post_event_window}) seconds"
+        )
+
+    event_frame = int(pre_event_window * imaging_rate)
+    start_frame = event_frame + int(start_sec * imaging_rate)
+    end_frame = event_frame + int(end_sec * imaging_rate)
+    if start_frame >= end_frame:
+        raise ValueError(
+            f"{window_name} is shorter than one frame at {imaging_rate} Hz"
+        )
+    return start_frame, end_frame
+
+
+def _stim_frames_to_aligned_mask(stim_frames, event_frames,
+                                 pre_event_window, imaging_rate,
+                                 trial_length, n_frames):
+    '''Map absolute stimulation-frame indices into each aligned trial.'''
+    stim_frames = np.asarray(stim_frames)
+    if stim_frames.ndim != 1:
+        raise ValueError('stim_frames must be a one-dimensional sequence')
+
+    if np.issubdtype(stim_frames.dtype, np.bool_):
+        if len(stim_frames) != n_frames:
+            raise ValueError(
+                'A boolean stimulation mask must have one value per trace '
+                f'frame; expected {n_frames}, got {len(stim_frames)}'
+            )
+        stim_frames = np.flatnonzero(stim_frames)
+
+    if not np.issubdtype(stim_frames.dtype, np.number):
+        raise ValueError('stim_frames must contain integer frame indices')
+    if np.any(~np.isfinite(stim_frames)):
+        raise ValueError('stim_frames must contain only finite frame indices')
+    if np.any(stim_frames != np.floor(stim_frames)):
+        raise ValueError('stim_frames must contain integer frame indices')
+
+    stim_frames = stim_frames.astype(np.int64, copy=False)
+    if np.any((stim_frames < 0) | (stim_frames >= n_frames)):
+        raise ValueError(
+            f'stim_frames must fall within the trace bounds [0, {n_frames})'
+        )
+
+    event_frames = np.asarray(event_frames)
+    if event_frames.ndim != 1:
+        raise ValueError('event_frames must be a one-dimensional sequence')
+
+    pre_frames = int(pre_event_window * imaging_rate)
+    aligned_global_frames = (
+        event_frames.astype(np.int64, copy=False)[:, None]
+        - pre_frames
+        + np.arange(trial_length, dtype=np.int64)[None, :]
+    )
+    return np.isin(aligned_global_frames, stim_frames)
+
+
+def _prepare_fixed_nan_shuffle(trial_traces):
+    """Precompute indices for rolling finite values while fixing NaN positions."""
+    finite_mask = ~cp.isnan(trial_traces)
+    valid_counts = cp.sum(finite_mask, axis=-1, dtype=cp.int32)
+
+    # List each ROI/trial's finite sample positions in temporal order. NaN
+    # positions are sorted to the unused end of each row.
+    trial_length = trial_traces.shape[-1]
+    frame_indices = cp.arange(trial_length, dtype=cp.int32)[None, None, :]
+    valid_positions = cp.sort(
+        cp.where(finite_mask, frame_indices, trial_length), axis=-1
+    )
+    finite_ranks = cp.cumsum(finite_mask, axis=-1, dtype=cp.int32) - 1
+    return finite_mask, valid_counts, valid_positions, finite_ranks
+
+
+def _shuffle_finite_values_keep_nan_positions(
+        trial_traces, finite_mask, valid_counts, valid_positions,
+        finite_ranks):
+    """Circularly shift finite samples and restore the original fixed NaN mask."""
+    n_trials = trial_traces.shape[1]
+    trial_length = trial_traces.shape[-1]
+
+    # Matching masks receive the same trial shift, as in the original code.
+    random_quantiles = cp.random.random((1, n_trials))
+    max_shift = cp.maximum(valid_counts - 1, 0)
+    shifts = cp.where(
+        valid_counts > 1,
+        1 + cp.floor(random_quantiles * max_shift).astype(cp.int32),
+        0,
+    )
+
+    safe_counts = cp.maximum(valid_counts, 1)
+    source_ranks = cp.mod(
+        finite_ranks - shifts[:, :, None], safe_counts[:, :, None]
+    )
+    source_positions = cp.take_along_axis(
+        valid_positions, source_ranks, axis=-1
+    )
+    # Clipping only supplies a safe gather index for all-NaN trials.
+    source_positions = cp.minimum(source_positions, trial_length - 1)
+    shuffled = cp.take_along_axis(trial_traces, source_positions, axis=-1)
+    return cp.where(finite_mask, shuffled, cp.nan)
+
+
 def quantify_event_response(corrected_traces, event_frames,
                             baseline_window=(-1, 0), response_window=(0, 1.5), # seconds
                             dilation_k = 0,
                             imaging_rate=30.0, shuffle_test=True,
                             shuffle_params={'times': 1000,
                                             'pre_event_window':  2, # seconds
-                                            'post_event_window': 4 }
+                                            'post_event_window': 4 },
+                            stim_window = None,
+                            stim_frames = None,
                             
                             ):
     """ calculate event response and optional shuffle test with defined windows
@@ -387,6 +506,22 @@ def quantify_event_response(corrected_traces, event_frames,
         corrected_traces: Either 3D array [grid_y, grid_x, n_frames] or 2D array [n_rois, n_frames]
         baseline_window: (start, end) in seconds relative to event
         response_window: (start, end) in seconds relative to event
+        stim_window: Optional (start, end) in seconds relative to event, or a
+            session-length boolean array such as shutter_mask. With a boolean
+            mask, True values are first mapped into each aligned trial. The
+            union of those event-relative positions is then set to NaN in
+            every trial: if any selected trial was stimulated at a time
+            point, that time point is excluded from all profile and response
+            calculations. During shuffling, finite samples are rolled without
+            these missing samples and the NaNs are restored at their original
+            aligned-frame positions.
+        stim_frames: Optional one-dimensional sequence of absolute frame
+            indices covered by stimulation (for example,
+            df_pulse['train_covered_frames']). These indices are mapped into
+            every event-aligned trial separately. Their event-relative union
+            is excluded from every trial during quantification. A
+            session-length boolean mask is also accepted. Cannot be supplied
+            together with stim_window.
     """
     if corrected_traces.ndim == 2:
         # ROI format: [n_rois, n_frames] -> reshape to [n_rois, 1, n_frames]
@@ -429,13 +564,82 @@ def quantify_event_response(corrected_traces, event_frames,
                                         event_frames = event_frames,
                                         bef=shuffle_params['pre_event_window'],
                                         aft=shuffle_params['post_event_window'],
+                                        fs=imaging_rate,
                                         gpu=1) # [n_rois, n_trials, trial_len]
 
-    # Apply same extreme value filtering to trial_aligned_traces for shuffle test
-    exclude_trial_idx = cp.any(cp.isnan(trial_aligned_traces), axis=-1) # [n_rois, n_trials]
-    trial_aligned_traces[exclude_trial_idx] = cp.nan
+    if stim_window is not None and stim_frames is not None:
+        raise ValueError('Pass either stim_window or stim_frames, not both')
+
+    # A session-length boolean shutter mask is an absolute-frame mask, not an
+    # event-relative time window. Route it through the per-trial frame mapper.
+    if stim_window is not None:
+        stim_window_array = np.asarray(stim_window)
+        if (stim_window_array.ndim == 1
+                and np.issubdtype(stim_window_array.dtype, np.bool_)):
+            stim_frames = stim_window_array
+            stim_window = None
+
+    stim_frame_bounds = None
+    allowed_nan_frames = None
+    if stim_frames is not None:
+        allowed_nan_frames = _stim_frames_to_aligned_mask(
+            stim_frames,
+            event_frames,
+            shuffle_params['pre_event_window'],
+            imaging_rate,
+            trial_aligned_traces.shape[-1],
+            n_frames,
+        )
+        allowed_nan_frames = cp.asarray(allowed_nan_frames, dtype=cp.bool_)
+    elif stim_window is not None:
+        stim_frame_bounds = _window_to_aligned_frame_bounds(
+            stim_window,
+            shuffle_params['pre_event_window'],
+            shuffle_params['post_event_window'],
+            imaging_rate,
+            'stim_window',
+        )
+        stim_start, stim_end = stim_frame_bounds
+        allowed_nan_frames = cp.zeros(
+            (n_trials, trial_aligned_traces.shape[-1]), dtype=cp.bool_
+        )
+        allowed_nan_frames[:, stim_start:stim_end] = True
+
+    # Reject ROI/trials with any unexpected NaN. If a stimulation window is
+    # supplied, NaNs inside that window are allowed and remain in the data.
+    nan_mask = cp.isnan(trial_aligned_traces)
+    if allowed_nan_frames is None:
+        exclude_trial_idx = cp.any(nan_mask, axis=-1)
+    else:
+        exclude_trial_idx = cp.any(
+            nan_mask & ~allowed_nan_frames[None, :, :], axis=-1
+        )
+
+    trial_aligned_traces = cp.where(
+        exclude_trial_idx[:, :, None], cp.nan, trial_aligned_traces
+    )
+
+    # Use a common stimulation mask for quantification. If any selected trial
+    # was covered at an event-relative time point, exclude that time point
+    # from every trial's profile, baseline/response, and shuffle calculations.
+    if allowed_nan_frames is not None:
+        stim_union_frames = cp.any(allowed_nan_frames, axis=0)
+        trial_aligned_traces = cp.where(
+            stim_union_frames[None, None, :],
+            cp.nan,
+            trial_aligned_traces,
+        )
+
     n_keep_trial = cp.sum(~exclude_trial_idx, axis=-1).get()
-    event_aligned_mean = np.nanmean(trial_aligned_traces.get(), axis=1) # [n_rois, n_trials, trial_len]
+    profile_sample_count = cp.sum(
+        ~cp.isnan(trial_aligned_traces), axis=1
+    )
+    event_aligned_mean = cp.where(
+        profile_sample_count > 0,
+        cp.nansum(trial_aligned_traces, axis=1)
+        / cp.maximum(profile_sample_count, 1),
+        cp.nan,
+    ).get()  # [n_rois, trial_len]
     
     # Extract baseline and response segments directly from trial_aligned_traces
     # trial_aligned_traces is aligned with event at index = shuffle_pre_frames
@@ -490,6 +694,11 @@ def quantify_event_response(corrected_traces, event_frames,
         # Extract only valid ROIs for shuffle computation
         valid_trial_aligned = trial_aligned_traces[valid_roi_indices, :, :]
 
+        if allowed_nan_frames is not None:
+            fixed_nan_shuffle_info = _prepare_fixed_nan_shuffle(
+                valid_trial_aligned
+            )
+
         # shuffle containers - only for valid ROIs
         shuffle_pooled_stds_valid = cp.zeros((n_valid_rois, n_shuffle))
         shuffle_amps_valid = cp.zeros((n_valid_rois, n_shuffle))
@@ -499,17 +708,26 @@ def quantify_event_response(corrected_traces, event_frames,
         cp.random.seed(42)
 
         for shuffle_idx in tqdm(range(n_shuffle), desc='Using GPU for shuffle...'):
-            # Generate random shifts for all trials at once
-            shifts = cp.random.randint(1, trial_length, size=n_trials)
+            if allowed_nan_frames is None:
+                # Generate random shifts for all trials at once
+                shifts = cp.random.randint(1, trial_length, size=n_trials)
 
-            # Vectorized circular shift via index mapping
-            indices = (cp.arange(trial_length)[None, None, :] - shifts[None, :, None]) % trial_length  # (1, n_trials, trial_length)
-            indices = cp.broadcast_to(indices, valid_trial_aligned.shape)  # (n_valid_rois, n_trials, trial_length)
-            shuffled_segments_valid = cp.take_along_axis(
-                valid_trial_aligned,
-                indices,
-                axis=2
-            )  # (n_valid_rois, n_trials, trial_length)
+                # Vectorized circular shift via index mapping
+                indices = (cp.arange(trial_length)[None, None, :] - shifts[None, :, None]) % trial_length  # (1, n_trials, trial_length)
+                indices = cp.broadcast_to(indices, valid_trial_aligned.shape)  # (n_valid_rois, n_trials, trial_length)
+                shuffled_segments_valid = cp.take_along_axis(
+                    valid_trial_aligned,
+                    indices,
+                    axis=2
+                )  # (n_valid_rois, n_trials, trial_length)
+            else:
+                # Roll finite samples only, then restore stimulation-artifact
+                # NaNs at their original aligned-frame positions.
+                shuffled_segments_valid = (
+                    _shuffle_finite_values_keep_nan_positions(
+                        valid_trial_aligned, *fixed_nan_shuffle_info
+                    )
+                )
 
             # Extract baseline and response segments
             shuffled_baseline_segments = shuffled_segments_valid[:, :, baseline_start:baseline_end]
@@ -578,6 +796,8 @@ def quantify_event_response(corrected_traces, event_frames,
         # reshape reshults back to original roi order
         event_aligned_mean = event_aligned_mean.reshape(n_grids_y, n_grids_x, 
                                                         event_aligned_mean.shape[-1])
+        baseline_all_mean = baseline_all_mean.reshape(n_grids_y, n_grids_x)
+        response_all_mean = response_all_mean.reshape(n_grids_y, n_grids_x)
         response_amp_all = response_amp_all.reshape(n_grids_y, n_grids_x) # [n_rois,]
         response_effect_size_all = response_effect_size_all.reshape(n_grids_y, n_grids_x)
         response_ratio_all = response_ratio_all.reshape(n_grids_y, n_grids_x)

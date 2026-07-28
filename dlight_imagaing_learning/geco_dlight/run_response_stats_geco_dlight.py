@@ -20,9 +20,9 @@ from common.event_response_quantification import quantify_event_response
 #%%
 OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\dlight_learning\geco_dlight")
 OUT_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res'
-OUT_DIR_FIG = OUT_DIR_RAW_DATA / 'TEST_PLOTS' / 'regression_res'
-regression_name ='single_trial_regression_func_roi'
 OUT_DIR = OUT_DIR_RAW_DATA / 'processed_dataframe'
+OUT_DIR_FIG = ''
+regression_name = 'single_trial_regression_anat_roi'
 
 
 dlight_pre  = (-1, 0)
@@ -30,16 +30,35 @@ dlight_post = (0, 1)
 geco_pre  = (-1, 0)
 geco_post = (0.5, 1.5)
 
-p_session_info = OUT_DIR_RAW_DATA / 'all_animals_learning_classification.parquet'
-df_all = pd.read_parquet(p_session_info)
-rec_lst = df_all.loc[(df_all['days_from_learned']<=2)&
-                     (df_all['animal']=='AC953'), 'rec'].to_list()
+
 #%%
-# test session
-# rec_lst = ['AC953-20240919-02', ]
-# rec_lst = ['AC991-20250710-04',]
 error_lst = []
-rec_lst=['AC953-20240918-02',]
+rec_lst=[
+'AC327-20260602-02',     
+'AC327-20260603-02',     
+'AC327-20260604-02',     
+'AC327-20260605-02',     
+'AC327-20260606-02',     
+'AC327-20260607-02',     
+'AC327-20260608-02',     
+'AC327-20260609-02',     
+'AC327-20260610-02',     
+'AC327-20260611-02',
+'AC327-20260612-02', 
+
+'AC330-20260602-02',
+'AC330-20260603-02', 
+'AC330-20260604-02', 
+'AC330-20260605-02', 
+'AC330-20260606-02', 
+'AC330-20260607-02', 
+'AC330-20260608-02',
+'AC330-20260609-02', 
+'AC330-20260610-02',          
+'AC330-20260611-02',          
+'AC330-20260612-02',     
+    
+    ]
 for rec in tqdm(rec_lst):
     print(f'\nprocessing {rec}...')
     try:
@@ -56,7 +75,7 @@ for rec in tqdm(rec_lst):
         regress_traces = np.load(p_regression / f'{regression_name}_res_traces.npz')
         corrected_dlight = regress_traces['corrected_dlight']
         # loading dFF traces
-        if not (p_regression / 'dff_corrected_dlight_new.npy').exists():
+        if not (p_regression / 'dff_corrected_dlight.npy').exists():
             print('calculating dlight dFF trace...') 
             dff_dlight, baseline_dlight = percentile_dff(corrected_dlight, q=20, return_baseline=True)
             np.save(p_regression / 'dff_corrected_dlight.npy', dff_dlight)
@@ -66,10 +85,10 @@ for rec in tqdm(rec_lst):
             dff_dlight = np.load(p_regression / 'dff_corrected_dlight.npy')
             
             
-        if not (p_regression / 'dff_geco_new.npy').exists():
+        if not (p_regression / 'dff_geco.npy').exists():
             print('calculating geco dFF trace...') 
             anm, date, ss = rec.split('-')
-            p_suite2p_geco = Path(rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\dLight+GECO\GECO")
+            p_suite2p_geco = Path(rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\anat_detect\suite2p\plane0")
             geco_trace = np.load(p_suite2p_geco / 'F.npy')
             geco_trace_neu = np.load(p_suite2p_geco / 'Fneu.npy')
             # correct calcium trace with neuropil signal

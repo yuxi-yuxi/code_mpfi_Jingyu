@@ -75,7 +75,7 @@ for _, rec in rec_ctrl.iterrows():
                 n_running_frames = running_calcium_map_img.shape[-1]
 
                 # Temporal binning (time within each lap, fixed 4s window)
-                event_count_raw, event_rate_raw, occupancy_raw, per_lap_profile, n_time_bins, median_lap_duration_s = tcf.temporal_binning(
+                event_count_raw, event_rate_raw, occupancy_raw, per_lap_profile, per_lap_occupancy, n_time_bins, median_lap_duration_s = tcf.temporal_binning(
                     running_calcium_map_img, running_time_map_img, running_distance_map_img,
                     track_length=track_length, time_bin_size=time_bin_size,
                     max_lap_duration_s=max_lap_duration_s, frame_rate=frame_rate
@@ -86,6 +86,18 @@ for _, rec in rec_ctrl.iterrows():
                     continue
 
                 print(f"  n_time_bins: {n_time_bins}, median_lap_duration: {median_lap_duration_s:.2f}s")
+
+                # Per-cell event rate / occupancy from valid laps only.
+                # For time cells, only laps with a NaN bin where occupancy > 0
+                # (extreme dFF in the middle of a lap) are excluded — trailing
+                # NaNs from laps shorter than max_lap_duration_s are tolerated.
+                valid_trials_mask = ~np.any(
+                    np.isnan(per_lap_profile) & (per_lap_occupancy[None, :, :] > 0),
+                    axis=-1,
+                )
+                _, event_rate_valid, occupancy_valid = tcf.compute_valid_event_rate(
+                    per_lap_profile, per_lap_occupancy, valid_trials_mask
+                )
 
                 # Detect time fields
                 df_time_field = tcf.detect_time_field(
@@ -100,8 +112,8 @@ for _, rec in rec_ctrl.iterrows():
                 total_active_frames = np.sum(running_calcium_map_img > 0, axis=-1)
                 df_time_field['total_active_frames'] = total_active_frames
 
-                # Compute temporal information
-                temporal_information = tcf.calculate_temporal_info(event_rate_raw, occupancy_raw)
+                # Compute temporal information from valid trials only
+                temporal_information = tcf.calculate_temporal_info(event_rate_valid, occupancy_valid)
                 df_time_field['temporal_information_bits'] = temporal_information
 
                 # Store metadata
@@ -124,8 +136,6 @@ for _, rec in rec_ctrl.iterrows():
                         running_calcium_map_img[candidate_indices],
                         running_time_map_img,
                         running_distance_map_img,
-                        occupancy_raw,
-                        n_time_bins,
                         shuff_times=1000,
                         gpu=True,
                         track_length=track_length,

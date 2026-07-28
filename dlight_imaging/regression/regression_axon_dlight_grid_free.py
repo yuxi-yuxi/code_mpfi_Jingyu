@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import time
 from tqdm import tqdm
-
+import matplotlib.pyplot as plt
 if r"Z:\Jingyu\code_mpfi_Jingyu" not in sys.path:
     sys.path.insert(0, r"Z:\Jingyu\code_mpfi_Jingyu")
 

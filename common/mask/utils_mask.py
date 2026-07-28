@@ -19,8 +19,8 @@ import cv2
 from scipy.ndimage import gaussian_filter, uniform_filter, minimum_filter, binary_dilation
 from common.plotting_functions_Jingyu import save_fig
 
-def load_axon_mask(p_masks):
-    p_fiber_mask = p_masks / r'ch2_FOV.npy_ROI_dict_selected.npy'
+def load_axon_mask(p_fiber_masks, maks_name='ch2_FOV.npy_ROI_dict_selected.npy'):
+    p_fiber_mask = p_fiber_masks / maks_name
     print(f'loading axon masks from {p_fiber_mask}...')
     if os.path.exists(p_fiber_mask):
         axon_mask = np.zeros((512, 512), dtype='bool')
@@ -400,7 +400,7 @@ def axon_mask_dilation_grid_free(global_axon_mask, global_dlight_mask, ref_img,
                       filebase=f'dilated_global_axon_k={k_size}',
                       save_tif=False)
         
-        if visualize:
+        if visualize and len(dilation_steps)>1:
             ax = axs[0]
             ax.imshow(
                 np.where(global_axon_mask[y0:y1, x0:x1], 1, np.nan),
@@ -456,19 +456,19 @@ def dlight_regressor_mask (p_mask,
                         dilated_block = binary_dilation(grid_block, iterations=neu_pix)
                         dilated_roi[ii:ii+grid_size, jj:jj+grid_size] = dilated_block
         else:
-            dilated_roi = binary_dilation(global_axon_mask_dilated, iterations=k_size)
+            dilated_roi = binary_dilation(global_axon_mask_dilated, iterations=neu_pix)
         
-        neuropil_mask = ((dilated_roi&(~global_axon_mask)&(~global_axon_mask_dilated))
+        regressor_mask = ((dilated_roi&(~global_axon_mask)&(~global_axon_mask_dilated))
                          &(global_membrane_mask))
         # save masks
-        save_mask(neuropil_mask, output_dir, filebase=f'dlight_regressor_fiber_dilation_k={k_size}')
+        save_mask(regressor_mask, output_dir, filebase=f'dlight_regressor_fiber_dilation_k={k_size}')
         
         ax = axs[i]
         ax.imshow(ref_img,
                   vmin = np.percentile(ref_img, 1),
                   vmax = np.percentile(ref_img, 98),
                   cmap='gray')
-        ax.imshow(np.where(neuropil_mask>0, 1 , np.nan),
+        ax.imshow(np.where(regressor_mask>0, 1 , np.nan),
                   interpolation='none',
                   cmap='Set1', alpha=0.5)
         if constrain_to_grid:
@@ -593,21 +593,24 @@ def dlight_regressor_mask_grid_free (p_mask,
 
 def plot_membrane_mask(mean_img_green, 
                       base_mask, global_dlight_mask_enhanced,
-                      path_result_fig):
+                      path_result_fig,
+                      ref_ch = 'mean_dLight',
+                      vmin = 1,
+                      vmax = 98):
     fig, axs = plt.subplots(1, 3, dpi=300)
     # fig.suptitle(f'{rec}', x=0.5, y=0.8)
     ax = axs[0]
     ax.imshow(mean_img_green,
-              vmin = np.percentile(mean_img_green, 1),
-              vmax = np.percentile(mean_img_green, 98),
+              vmin = np.percentile(mean_img_green, vmin),
+              vmax = np.percentile(mean_img_green, vmax),
               cmap='gray')
-    ax.set(title='mean_dLight')
+    ax.set(title = ref_ch)
     ax.axis("off")
     
     ax = axs[1]
     ax.imshow(mean_img_green,
-              # vmin = np.percentile(mean_img_green, 1),
-              # vmax = np.percentile(mean_img_green, 98),
+              vmin = np.percentile(mean_img_green, vmin),
+              vmax = np.percentile(mean_img_green, vmax),
               cmap='gray')
     ax.imshow(np.where(base_mask>0, 1 , np.nan), 
               interpolation='none',
@@ -617,8 +620,8 @@ def plot_membrane_mask(mean_img_green,
     
     ax = axs[2]
     ax.imshow(mean_img_green,
-              # vmin = np.percentile(mean_img_green, 1),
-              # vmax = np.percentile(mean_img_green, 98),
+              vmin = np.percentile(mean_img_green, vmin),
+              vmax = np.percentile(mean_img_green, vmax),
               cmap='gray')
     ax.imshow(np.where(global_dlight_mask_enhanced>0, 1 , np.nan), 
               interpolation='none',

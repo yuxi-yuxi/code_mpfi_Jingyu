@@ -346,6 +346,298 @@ def plot_roi_response_map(
     plt.close(fig)
 
 
+## -----------------------------------------------------------------------------
+## Batched extraction (for long recordings where the full float32 stack OOMs)
+##
+## These functions accept an int16 memmap, precompute per-ROI pixel indices once,
+## then iterate over frame batches, casting each chunk to float32 just in time.
+## Behaviour mirrors the non-batched workers (pixel thresholds, NaN handling).
+## -----------------------------------------------------------------------------
+
+def _build_intersected_roi_masks(stat_array, global_dlight_mask, soma_indices):
+    """Precompute (ypix, xpix) index arrays for `suite2p_roi & global_dlight_mask`.
+
+    Returns a list aligned with `soma_indices`; entries are None when the final
+    mask has fewer than 10 pixels (matching `_extract_roi_trace_worker_intersected`).
+    """
+    H, W = global_dlight_mask.shape
+    masks = []
+    for roi_idx in soma_indices:
+        roi_info = stat_array[roi_idx]
+        ypix, xpix = roi_info['ypix'], roi_info['xpix']
+        if len(ypix) == 0:
+            masks.append(None)
+            continue
+        suite2p_roi_mask = np.zeros((H, W), dtype=bool)
+        suite2p_roi_mask[ypix, xpix] = True
+        final_roi_mask = suite2p_roi_mask & global_dlight_mask
+        if np.sum(final_roi_mask) < 10:
+            masks.append(None)
+            continue
+        masks.append(np.where(final_roi_mask))
+    return masks
+
+
+def _build_signal_and_neuropil_masks(stat_array, global_dlight_mask, soma_indices,
+                                     neuropil_dilation_iterations=3):
+    """Precompute per-ROI (signal_yx, neuropil_yx) index arrays.
+
+    Mirrors `_extract_roi_signal_and_background_worker`: signal threshold >= 5,
+    neuropil threshold >= 10; either slot can be None independently.
+    """
+    H, W = global_dlight_mask.shape
+    masks = []
+    for roi_idx in soma_indices:
+        roi_info = stat_array[roi_idx]
+        ypix, xpix = roi_info['ypix'], roi_info['xpix']
+        if len(ypix) == 0:
+            masks.append((None, None))
+            continue
+        suite2p_roi_mask = np.zeros((H, W), dtype=bool)
+        suite2p_roi_mask[ypix, xpix] = True
+
+        signal_mask = suite2p_roi_mask & global_dlight_mask
+        dilated_roi = binary_dilation(suite2p_roi_mask, iterations=neuropil_dilation_iterations)
+        neuropil_shell = dilated_roi & (~suite2p_roi_mask)
+        final_neuropil_mask = neuropil_shell & global_dlight_mask
+
+        sig = np.where(signal_mask) if np.sum(signal_mask) >= 5 else None
+        bg = np.where(final_neuropil_mask) if np.sum(final_neuropil_mask) >= 10 else None
+        masks.append((sig, bg))
+    return masks
+
+
+def extract_roi_traces_batched_intersected(
+    mov_memmap,
+    stat_array,
+    global_dlight_mask,
+    roi_indices_to_extract: np.ndarray = None,
+    batch_size: int = 2000,
+):
+    """Batched version of `extract_roi_traces_parallel_intersected`.
+
+    `mov_memmap` is a (T, H, W) int16 memmap (or any array with fancy-index
+    support); the function never holds more than `batch_size` frames in float32.
+    """
+    T = mov_memmap.shape[0]
+    num_total_rois = len(stat_array)
+    if roi_indices_to_extract is None:
+        tasks = np.arange(num_total_rois)
+        print(f"No specific ROIs provided. Extracting traces for all {num_total_rois} ROIs (batched)...")
+    else:
+        tasks = roi_indices_to_extract
+        print(f"Extracting traces for the {len(tasks)} selected ROIs (batched)...")
+
+    roi_masks = _build_intersected_roi_masks(stat_array, global_dlight_mask, tasks)
+    traces = np.full((len(tasks), T), np.nan, dtype=np.float32)
+
+    for start in tqdm(range(0, T, batch_size), desc="Batched ROI trace extraction"):
+        end = min(start + batch_size, T)
+        mov_chunk = np.asarray(mov_memmap[start:end], dtype=np.float32)
+        for i, m in enumerate(roi_masks):
+            if m is None:
+                continue
+            yp, xp = m
+            traces[i, start:end] = mov_chunk[:, yp, xp].mean(axis=1)
+        del mov_chunk
+    return traces
+
+
+def extract_signal_and_background_traces_batched(
+    mov_memmap,
+    stat_array,
+    global_dlight_mask,
+    roi_indices_to_extract: np.ndarray = None,
+    neuropil_dilation_iterations: int = 3,
+    batch_size: int = 2000,
+):
+    """Batched version of `extract_signal_and_background_traces_parallel`."""
+    T = mov_memmap.shape[0]
+    num_total_rois = len(stat_array)
+    if roi_indices_to_extract is None:
+        tasks = np.arange(num_total_rois)
+        print(f"Extracting traces for all {num_total_rois} ROIs (batched)...")
+    else:
+        tasks = roi_indices_to_extract
+        print(f"Extracting traces for the {len(tasks)} selected ROIs (batched)...")
+
+    masks = _build_signal_and_neuropil_masks(
+        stat_array, global_dlight_mask, tasks, neuropil_dilation_iterations
+    )
+    signal_traces = np.full((len(tasks), T), np.nan, dtype=np.float32)
+    bg_traces = np.full((len(tasks), T), np.nan, dtype=np.float32)
+
+    for start in tqdm(range(0, T, batch_size), desc="Batched signal/bg extraction"):
+        end = min(start + batch_size, T)
+        mov_chunk = np.asarray(mov_memmap[start:end], dtype=np.float32)
+        for i, (sig, bg) in enumerate(masks):
+            if sig is not None:
+                yp, xp = sig
+                signal_traces[i, start:end] = mov_chunk[:, yp, xp].mean(axis=1)
+            if bg is not None:
+                yp, xp = bg
+                bg_traces[i, start:end] = mov_chunk[:, yp, xp].mean(axis=1)
+        del mov_chunk
+    return signal_traces, bg_traces
+
+
+def analyze_all_ROI_traces_batched(
+    mov_memmap: np.ndarray,
+    stat_array: np.ndarray,
+    global_dlight_mask: np.ndarray,
+    event_frames: np.ndarray,
+    output_dir: str,
+    event_name: str,
+    trace_name: str,
+    soma_indices: np.ndarray = None,
+    pre_frames: int = 90,
+    post_frames: int = 120,
+    imaging_rate: float = 30.0,
+    batch_size: int = 2000,
+):
+    """Batched orchestrator mirroring `analyze_all_ROI_traces`.
+
+    Accepts an int16 memmap movie instead of a float32 array; saves outputs with
+    the same schema as the non-batched version for drop-in compatibility.
+    """
+    print(f"\n--- Starting Soma Trace Analysis (batched) for '{event_name}' ---")
+    output_path = Path(output_dir)
+    figure_path = output_path / 'soma_response_maps'
+    figure_path.mkdir(parents=True, exist_ok=True)
+
+    if soma_indices is None:
+        soma_indices = np.arange(len(stat_array))
+
+    print(" > Extracting dLight-masked traces (batched)...")
+    soma_traces_dlight_masked = extract_roi_traces_batched_intersected(
+        mov_memmap, stat_array, global_dlight_mask,
+        roi_indices_to_extract=soma_indices, batch_size=batch_size,
+    )
+
+    print("\nStep 2: Calculating trial-averaged traces...")
+    mean_soma_dlight_masked, sem_soma_dlight_masked = calculate_trial_average_from_traces(
+        soma_traces_dlight_masked, event_frames, pre_frames, post_frames
+    )
+
+    data_save_path = output_path / f'{trace_name}.npz'
+    print(f"\nStep 3: Saving processed data to {data_save_path}")
+    np.savez_compressed(
+        data_save_path,
+        soma_traces_dlight_masked=soma_traces_dlight_masked,
+        mean_soma_dlight_masked=mean_soma_dlight_masked,
+        sem_soma_dlight_masked=sem_soma_dlight_masked,
+        soma_indices=soma_indices,
+        pre_frames=pre_frames,
+        post_frames=post_frames,
+    )
+
+    print("\nStep 4: Generating and saving summary heatmap...")
+    plot_roi_response_map(
+        mean_trace_trials=mean_soma_dlight_masked,
+        stat_array=stat_array,
+        roi_indices_to_extract=soma_indices,
+        pre_frames=pre_frames,
+        mean_img=global_dlight_mask,
+        imaging_rate=imaging_rate,
+        str_align=event_name,
+        save_path=figure_path / f'{event_name}_soma_response_map.png',
+    )
+
+    print(f"\n--- Soma trace analysis (batched) for '{event_name}' complete. ---")
+    return {
+        'soma_traces_dlight_masked': soma_traces_dlight_masked,
+        'mean_soma_dlight_masked': mean_soma_dlight_masked,
+    }
+
+
+def analyze_all_ROI_traces_and_background_batched(
+    mov_memmap: np.ndarray,
+    stat_array: np.ndarray,
+    global_dlight_mask: np.ndarray,
+    event_frames: np.ndarray,
+    output_dir: str,
+    event_name: str,
+    trace_name: str,
+    soma_indices: np.ndarray = None,
+    pre_frames: int = 90,
+    post_frames: int = 120,
+    imaging_rate: float = 30.0,
+    neuropil_dilation_iterations: int = 3,
+    batch_size: int = 2000,
+):
+    """Batched orchestrator mirroring `analyze_all_ROI_traces_and_background`."""
+    print(f"\n--- Starting Soma Trace Analysis (batched) for '{event_name}' ---")
+    output_path = Path(output_dir)
+    figure_path = output_path / 'soma_response_maps'
+    figure_path.mkdir(parents=True, exist_ok=True)
+
+    if soma_indices is None:
+        soma_indices = np.arange(len(stat_array))
+
+    print(" > Extracting dLight-masked signal + neuropil traces (batched)...")
+    soma_traces_dlight_masked, bg_traces_dlight_masked = extract_signal_and_background_traces_batched(
+        mov_memmap, stat_array, global_dlight_mask,
+        roi_indices_to_extract=soma_indices,
+        neuropil_dilation_iterations=neuropil_dilation_iterations,
+        batch_size=batch_size,
+    )
+
+    print("\nStep 2: Calculating trial-averaged roi traces...")
+    mean_soma_dlight_masked, sem_soma_dlight_masked = calculate_trial_average_from_traces(
+        soma_traces_dlight_masked, event_frames, pre_frames, post_frames
+    )
+
+    print("\nStep 2: Calculating trial-averaged background traces...")
+    mean_bg_dlight_masked, sem_bg_dlight_masked = calculate_trial_average_from_traces(
+        bg_traces_dlight_masked, event_frames, pre_frames, post_frames
+    )
+
+    data_save_path = output_path / f'{trace_name}.npz'
+    print(f"\nStep 3: Saving processed data to {data_save_path}")
+    np.savez_compressed(
+        data_save_path,
+        soma_traces_dlight_masked=soma_traces_dlight_masked,
+        bg_traces_dlight_masked=bg_traces_dlight_masked,
+        mean_soma_dlight_masked=mean_soma_dlight_masked,
+        sem_soma_dlight_masked=sem_soma_dlight_masked,
+        mean_bg_dlight_masked=mean_bg_dlight_masked,
+        sem_bg_dlight_masked=sem_bg_dlight_masked,
+        soma_indices=soma_indices,
+        pre_frames=pre_frames,
+        post_frames=post_frames,
+    )
+
+    print("\nStep 4: Generating and saving summary heatmap...")
+    plot_roi_response_map(
+        mean_trace_trials=mean_soma_dlight_masked,
+        stat_array=stat_array,
+        roi_indices_to_extract=soma_indices,
+        pre_frames=pre_frames,
+        mean_img=global_dlight_mask,
+        imaging_rate=imaging_rate,
+        str_align=event_name,
+        save_path=figure_path / f'{event_name}_soma_response_map.png',
+    )
+    plot_roi_response_map(
+        mean_trace_trials=mean_bg_dlight_masked,
+        stat_array=stat_array,
+        roi_indices_to_extract=soma_indices,
+        pre_frames=pre_frames,
+        mean_img=global_dlight_mask,
+        imaging_rate=imaging_rate,
+        str_align=f'{event_name}, background',
+        save_path=figure_path / f'{event_name}_background_response_map.png',
+    )
+
+    print(f"\n--- Soma trace analysis (batched) for '{event_name}' complete. ---")
+    return {
+        'soma_traces_dlight_masked': soma_traces_dlight_masked,
+        'bg_traces_dlight_masked': bg_traces_dlight_masked,
+        'mean_soma_dlight_masked': mean_soma_dlight_masked,
+        'bg_soma_dlight_masked': mean_soma_dlight_masked,
+    }
+
+
 def analyze_all_ROI_traces(
     mov: np.ndarray,
     stat_array: np.ndarray,

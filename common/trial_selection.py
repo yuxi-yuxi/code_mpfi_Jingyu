@@ -8,10 +8,13 @@ import numpy as np
 import pandas as pd
 
 #%%
-def seperate_valid_trial(beh):    
+def seperate_valid_trial(beh, time_thresh=None):    
+    if time_thresh is None:
+        time_thresh = 0
     valid_trials = np.where((~np.isnan(beh['reward_times']))&
                             (np.array(beh['non_stop_trials'])==0)&
-                            (np.array(beh['non_fullstop_trials'])==0),
+                            (np.array(beh['non_fullstop_trials'])==0)&
+                            (np.array(beh['reward_times_aligned'])<time_thresh),
                             True, False)
     return valid_trials.astype('bool')
 

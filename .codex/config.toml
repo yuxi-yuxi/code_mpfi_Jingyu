@@ -1,0 +1,6 @@
+# This repository lives on an authenticated Windows network share. The native
+# Windows sandbox runs commands as an isolated account, which cannot access the
+# share and fails during shell startup. Keep approval prompts enabled while
+# allowing commands to run with the signed-in user's network credentials.
+approval_policy = "on-request"
+sandbox_mode = "danger-full-access"

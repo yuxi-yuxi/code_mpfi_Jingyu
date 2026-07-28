@@ -134,10 +134,10 @@ for rec in tqdm(rec_lst):
     short_trials_mean_up_rois.append(short_trials_mean)
     long_trials_mean_up_rois.append(long_trials_mean)
     
-    short_trials_mean_zscore = np.nanmean(dlight_zscore_aligned[:, short_trials_indx, :], axis=1)
-    long_trials_mean_zscore = np.nanmean(dlight_zscore_aligned[:, long_trials_indx, :], axis=1)
-    short_trials_mean_zscore_up_rois.append(short_trials_mean_zscore)
-    long_trials_mean_zscore_up_rois.append(long_trials_mean_zscore)
+    # short_trials_mean_zscore = np.nanmean(dlight_zscore_aligned[:, short_trials_indx, :], axis=1)
+    # long_trials_mean_zscore = np.nanmean(dlight_zscore_aligned[:, long_trials_indx, :], axis=1)
+    # short_trials_mean_zscore_up_rois.append(short_trials_mean_zscore)
+    # long_trials_mean_zscore_up_rois.append(long_trials_mean_zscore)
 
     
     # up rois only
@@ -159,8 +159,8 @@ for rec in tqdm(rec_lst):
 # long_trials_mean_all_rois = np.vstack(long_trials_mean_all_rois)
 short_trials_mean_up_rois = np.vstack(short_trials_mean_up_rois)
 long_trials_mean_up_rois = np.vstack(long_trials_mean_up_rois)
-short_trials_mean_zscore_up_rois = np.vstack(short_trials_mean_zscore_up_rois)
-long_trials_mean_zscore_up_rois = np.vstack(long_trials_mean_zscore_up_rois)
+# short_trials_mean_zscore_up_rois = np.vstack(short_trials_mean_zscore_up_rois)
+# long_trials_mean_zscore_up_rois = np.vstack(long_trials_mean_zscore_up_rois)
 #%%
 fig, ax = plt.subplots(dpi=200)
 xaxis = np.arange(30*(bef+aft))/30-2
@@ -193,7 +193,8 @@ profile_b = 100*long_trials_mean_up_rois
 fig, ax = plt.subplots(dpi=300, figsize=(2.5,2.5))
 pf.plot_two_traces_with_binned_stats(profile_b, profile_a,
                                      bef=2, aft=4, ax=ax, 
-                                     baseline_window=(-1, -0),
+                                     # baseline_window=(-1, -0),
+                                     baseline_window=(-0.5, 0),
                                      time_windows = time_windows,
                                      colors = ["tab:green", "gray"],
                                      labels = ["More t. since last rew.", "Less t. since last rew."],
@@ -201,18 +202,18 @@ pf.plot_two_traces_with_binned_stats(profile_b, profile_a,
 ax.set(xlim=(-1, 4), ylabel='%dF/F')
 save_fig(fig, OUT_DIR_FIG, r'last_reward_time_traces_dff.pdf', save=save_plot)
 
-profile_a = short_trials_mean_zscore_up_rois
-profile_b = long_trials_mean_zscore_up_rois
-fig, ax = plt.subplots(dpi=300, figsize=(2.5,2.5))
-pf.plot_two_traces_with_binned_stats(profile_b, profile_a,
-                                     bef=2, aft=4, ax=ax, 
-                                     baseline_window=None,
-                                     time_windows = time_windows,
-                                     colors = ["tab:green", "gray"],
-                                     labels = ["More t. since last rew.", "Less t. since last rew."],
-                                     )
-ax.set(xlim=(-1, 4), ylabel='zscored F')
-save_fig(fig, OUT_DIR_FIG, r'last_reward_time_traces_zscore.pdf', save=save_plot)
+# profile_a = short_trials_mean_zscore_up_rois
+# profile_b = long_trials_mean_zscore_up_rois
+# fig, ax = plt.subplots(dpi=300, figsize=(2.5,2.5))
+# pf.plot_two_traces_with_binned_stats(profile_b, profile_a,
+#                                      bef=2, aft=4, ax=ax, 
+#                                      baseline_window=None,
+#                                      time_windows = time_windows,
+#                                      colors = ["tab:green", "gray"],
+#                                      labels = ["More t. since last rew.", "Less t. since last rew."],
+#                                      )
+# ax.set(xlim=(-1, 4), ylabel='zscored F')
+# save_fig(fig, OUT_DIR_FIG, r'last_reward_time_traces_zscore.pdf', save=save_plot)
 #%%
 last_reward_time_all_flat = np.hstack(last_reward_time_all)
 hist = plt.hist(last_reward_time_all_flat, bins=100, range=(0,1000))

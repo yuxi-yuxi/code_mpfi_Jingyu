@@ -25,12 +25,14 @@ import dlight_imaging.regression.utils_regression as utl
 from common.robust_sd_filter import calculate_rsd_along_axis
 #%%
 def extract_traces(mov, movr, stat, soma_indices, global_dlight_mask, event_frames, output_dir,
-                   neuropil_dilation_iterations
+                   neuropil_dilation_iterations,
+                   batch_size
                    ):
     
-    # extract GECO traces    
-    Extract_dlight_masked_GECO_ROI_traces.analyze_all_ROI_traces(
-        mov=movr,
+    # extract GECO traces (batched: casts only `batch_size` frames to float32 at
+    # a time, so the full float32 stack is never materialized in RAM)
+    Extract_dlight_masked_GECO_ROI_traces.analyze_all_ROI_traces_batched(
+        mov_memmap=movr,
         stat_array=stat,
         soma_indices=soma_indices, # set as None to extract all rois
         global_dlight_mask=global_dlight_mask,
@@ -40,28 +42,32 @@ def extract_traces(mov, movr, stat, soma_indices, global_dlight_mask, event_fram
         trace_name='geco_roi_dlight_mask_geco_traces',
         pre_frames = 90,
         post_frames = 120,
-        imaging_rate = 30.0
+        imaging_rate = 30.0,
+        batch_size = batch_size,
     );
-    # extract dlight traces  
-    Extract_dlight_masked_GECO_ROI_traces.analyze_all_ROI_traces_and_background(
-        mov=mov,
+    # extract dlight traces
+    Extract_dlight_masked_GECO_ROI_traces.analyze_all_ROI_traces_and_background_batched(
+        mov_memmap=mov,
         stat_array=stat,
         soma_indices=soma_indices, # set as None to extract all rois
         global_dlight_mask=global_dlight_mask,
-        neuropil_dilation_iterations=neuropil_dilation_iterations, 
+        neuropil_dilation_iterations=neuropil_dilation_iterations,
         event_frames=event_frames,
         output_dir=output_dir,
         event_name='dlight_run_onset_dlight_mask',
         trace_name='geco_roi_dlight_mask_dlight_traces',
         pre_frames = 90,
         post_frames = 120,
-        imaging_rate = 30.0
+        imaging_rate = 30.0,
+        batch_size = batch_size,
+
     )
     
 def run_single_trial_regression_geco(p_suite2p_geco, p_suite2p_movie, regression_name,
                                      OUR_DIR_REGRESS, OUT_DIR_FIG,
                                      neuropil_dilation_iterations=3,
-                                     calculate_dff=0):
+                                     calculate_dff=0,
+                                     batch_size=2000):
     start_time = time.time()
     original_stdout = sys.stdout
     
@@ -79,7 +85,7 @@ def run_single_trial_regression_geco(p_suite2p_geco, p_suite2p_movie, regression
     nframes = suite2p_ops['nframes']
     # nframes = 1000
     # load masks path or generate mask file    
-    p_masks = utl.load_masks_geco_dlight(rec, OUR_DIR_REGRESS)
+    p_masks = utl.load_masks_geco_dlight(rec, OUR_DIR_REGRESS, p_suite2p_geco)
     global_dlight_mask = np.load(p_masks / 
                                'global_dlight_mask_enhanced.npy')
     is_soma =  np.load(p_masks/r'soma_class.npz')['is_soma']
@@ -101,15 +107,17 @@ def run_single_trial_regression_geco(p_suite2p_geco, p_suite2p_movie, regression
         # load info for GECO ROIs detected by suite2p 
         stat_path = p_suite2p_geco + r"\stat.npy"
         stat = np.load(stat_path, allow_pickle=True)
-        # load ch1 and ch2 movie
-        movr = utl.load_bin_file(p_suite2p_movie, r'\data.bin', n_frames=nframes, height=512, width=512)
-        mov = utl.load_bin_file(p_suite2p_movie, r"\data_chan2.bin", n_frames=nframes, height=512, width=512)
+        # load ch1 and ch2 movie as int16 memmaps (no full float32 copy in RAM;
+        # the batched extractors cast per-batch just in time)
+        movr = utl.load_bin_file_memmap(p_suite2p_movie, r'\data.bin', n_frames=nframes, height=512, width=512)
+        mov = utl.load_bin_file_memmap(p_suite2p_movie, r"\data_chan2.bin", n_frames=nframes, height=512, width=512)
         extract_traces(mov, movr, stat, 
                        soma_indices=None, # set as None to extract all rois 
                        global_dlight_mask=global_dlight_mask, 
                        event_frames=run_onset_frames, 
                        output_dir=out_path_regression,
-                       neuropil_dilation_iterations=3
+                       neuropil_dilation_iterations=3,
+                       batch_size=batch_size
                        )
         
         del mov, movr
@@ -132,7 +140,7 @@ def run_single_trial_regression_geco(p_suite2p_geco, p_suite2p_movie, regression
     # mean_dlight_dlight_masked = dlight_traces['mean_soma_dlight_masked']
     dlight_traces.close()
     
-    p_regress_res = out_path_regression/ f'{regression_name}_res_traces_new.npz'
+    p_regress_res = out_path_regression/ f'{regression_name}_res_traces.npz'
     if not p_regress_res.exists():
         ### Regression of all the ROIs in green channel using red channel trace (suite2p_roi_mask & global_dlight_mask)
         pre = 90
@@ -175,7 +183,7 @@ def run_single_trial_regression_geco(p_suite2p_geco, p_suite2p_movie, regression
             suite2p_geco_trace = np.load(p_suite2p_geco+r'\F.npy')
             geco_trace_corr = suite2p_geco_trace - 0.7*Fneu_geco
             dff_geco_soma = percentile_dff(geco_trace_corr, q=20) 
-            np.save(out_path_regression / 'dff_geco_.npy', dff_geco_soma)
+            np.save(out_path_regression / 'dff_geco.npy', dff_geco_soma)
                 
                 
         print(f"Completed: {rec}")
@@ -191,10 +199,13 @@ def run_single_trial_regression_geco(p_suite2p_geco, p_suite2p_movie, regression
         sys.stdout = original_stdout
 
 #%%
-OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\geco_dlight")
+# OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\geco_dlight")
+OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\dlight_learning\geco_dlight")
 OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res'
-OUT_DIR_FIG = Path(r"Z:\Jingyu\Code\dlight_imgaing\dlight_GECO_Ai14_Dbh\raw_data\regression_res")
-
+# OUT_DIR_FIG = Path(r"Z:\Jingyu\Code\dlight_imgaing\dlight_GECO_Ai14_Dbh\raw_data\regression_res")
+OUT_DIR_FIG = OUT_DIR_RAW_DATA/'TEST_PLOTS'/'regression_qc'
+if not OUT_DIR_FIG.exists():
+    OUT_DIR_FIG.mkdir(parents=True)
 regression_name ='single_trial_regression_anat_roi'
 #%%
 exp = r'dlight_GECO_Ai14_Dbh'
@@ -203,21 +214,60 @@ df_selected = pd.read_pickle(f_out_df_selected)
 df_selected = df_selected.loc[(df_selected['speed_corr_single_trial_r_median']<0.3)
                               # &(~df_selected.index.str.contains('AC991'))
                               ]
-rec_lst = df_selected.index.tolist()
+# rec_lst = df_selected.index.tolist()
+rec_lst = [
+# 'AC327-20260602-02',     
+# 'AC330-20260602-02',
+
+# 'AC327-20260603-02',     
+# 'AC330-20260603-02', 
+
+# 'AC327-20260604-02',     
+# 'AC330-20260604-02', 
+
+# 'AC327-20260605-02',     
+# 'AC330-20260605-02', 
+
+# 'AC327-20260606-02',     
+# 'AC330-20260606-02', 
+
+# 'AC327-20260607-02',     
+# 'AC330-20260607-02',  
+
+# 'AC327-20260608-02',     
+# 'AC330-20260608-02',
+
+# 'AC327-20260609-02',     
+# 'AC330-20260609-02',
+
+# 'AC327-20260610-02',     
+# 'AC330-20260610-02', 
+
+'AC327-20260611-02',     
+'AC330-20260611-02', 
+
+'AC327-20260612-02',     
+'AC330-20260612-02',          
+    ]
 
 error_lst = []
 original_stdout = sys.stdout
 # rec_lst=['AC953-20240919-02']
-for rec in tqdm(rec_lst[-10:-9]):
+for rec in tqdm(rec_lst):
     print(f'\nrunning single trial regression for {rec}...')
     anm, date, ss = rec.split('-')
-    p_suite2p_geco = rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\nonrigid_reg_geco\suite2p_anat_detec\plane0"
-    p_suite2p_movie = rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\nonrigid_reg_geco\suite2p\plane0"
+    # p_suite2p_geco = rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\nonrigid_reg_geco\suite2p_anat_detec\plane0"
+    # p_suite2p_movie = rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\nonrigid_reg_geco\suite2p\plane0"
+    
+    p_suite2p_geco = rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\anat_detect\suite2p\plane0"
+    p_suite2p_movie = rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\anat_detect\suite2p\plane0"
+
     # try:
     run_single_trial_regression_geco(p_suite2p_geco, p_suite2p_movie, regression_name,
                                      OUR_DIR_REGRESS, OUT_DIR_FIG,
                                      neuropil_dilation_iterations=3,
-                                     calculate_dff=True)
+                                     calculate_dff=True,
+                                     batch_size = 5000)
     
 
     # except:

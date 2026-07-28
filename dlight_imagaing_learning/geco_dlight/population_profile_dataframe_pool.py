@@ -17,6 +17,8 @@ def profile_is_valid(x):
     a = np.asarray(x)
     if a.size == 0:
         return False
+    if np.max(a)>10:
+        return False
     return np.isfinite(a).all()   # True only if no NaN/inf inside
 
 def classify_pyrs(dlight_stats, 
@@ -115,19 +117,43 @@ OUT_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res'
 # if not OUT_DIR_FIG.exists():
 #     OUT_DIR_FIG.mkdir(parents=True)
 # save_plot=0
-regression_name ='single_trial_regression_func_roi'
+regression_name ='single_trial_regression_anat_roi'
 OUT_DIR = OUT_DIR_RAW_DATA / 'processed_dataframe'
 
-p_session_info = OUT_DIR_RAW_DATA / 'all_animals_learning_classification.parquet'
-df_all = pd.read_parquet(p_session_info)
-rec_lst = df_all.loc[(df_all['days_from_learned']<=2)&
-                     (df_all['animal']=='AC953'), 'rec'].to_list()
+# p_session_info = OUT_DIR_RAW_DATA / 'all_animals_learning_classification.parquet'
+# df_all = pd.read_parquet(p_session_info)
+# rec_lst = df_all.loc[(df_all['days_from_learned']<=2)&
+#                      (df_all['animal']=='AC953'), 'rec'].to_list()
 
 
 
 #%% collect roi profile for all sessions
 df_pooled_profile = pd.DataFrame()
-# rec_lst = ['AC991-20250728-04',]
+rec_lst = [
+'AC330-20260602-02',
+'AC330-20260603-02', 
+'AC330-20260604-02', 
+'AC330-20260605-02', 
+'AC330-20260606-02', 
+'AC330-20260607-02', 
+'AC330-20260608-02',
+'AC330-20260609-02', 
+'AC330-20260610-02',          
+'AC330-20260611-02',          
+'AC330-20260612-02',      
+    
+'AC327-20260602-02',     
+'AC327-20260603-02',     
+'AC327-20260604-02',     
+'AC327-20260605-02',     
+'AC327-20260606-02',     
+'AC327-20260607-02',     
+'AC327-20260608-02',     
+'AC327-20260609-02',     
+'AC327-20260610-02',     
+'AC327-20260611-02',
+'AC327-20260612-02',      
+    ]
 for rec in rec_lst:
     print(f'loading: {rec}--------------------------------------------------')
     anm, date, ss = rec.split('-')
@@ -136,9 +162,9 @@ for rec in rec_lst:
     p_data = r"Z:\Jingyu\2P_Recording\{}\{}\{}\RegOnly".format(anm, f'{anm}-{date}', ss)
     p_regression = (OUT_DIR_REGRESS / rec / regression_name )
     p_masks      = OUT_DIR_REGRESS / rec / 'masks'
-    p_suite2p_geco      = Path(rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\nonrigid_reg_geco\suite2p_anat_detec\plane0")
-    if not p_suite2p_geco.exists():
-        p_suite2p_geco  = Path(rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\dLight+GECO\GECO")
+    p_suite2p_geco      = Path(rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\anat_detect\suite2p\plane0")
+    # if not p_suite2p_geco.exists():
+    #     p_suite2p_geco  = Path(rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\dLight+GECO\GECO")
     p_stats             = OUT_DIR_RAW_DATA / 'processed_dataframe' / f'{rec}_profile_stat_dlight_pre{dlight_pre}_post{dlight_post}.parquet'
     p_stats_geco        = OUT_DIR_RAW_DATA / 'processed_dataframe' / f'{rec}_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet'
     p_stats_geco_zscore = OUT_DIR_RAW_DATA / 'processed_dataframe_zscore' / f'{rec}_zscore_profile_stat_geco_pre{geco_pre}_post{geco_post}.parquet'
@@ -222,8 +248,8 @@ for rec in rec_lst:
     dlight_stats['non_up_amp_max'] = np.max([non_up_amp_bef, non_up_amp_aft])
     
     # only save dataframe for active soma
-    dlight_stats = dlight_stats.loc[dlight_stats['is_active_soma']]
-    dlight_stats = dlight_stats.loc[dlight_stats['n_keep_trial']>80]
+    # dlight_stats = dlight_stats.loc[dlight_stats['is_active_soma']]
+    # dlight_stats = dlight_stats.loc[dlight_stats['n_keep_trial']>80]
             
     # save per session dataframe
     p_df_out = OUT_DIR_RAW_DATA/'processed_dataframe' / rf"{rec}_profile_combined_geco_pre{geco_pre}_geco_post{geco_post}.parquet"

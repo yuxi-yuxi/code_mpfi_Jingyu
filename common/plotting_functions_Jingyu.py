@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
+from scipy.ndimage import gaussian_filter1d
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap, to_rgb
 if ("Z:\Jingyu\Code\Python" in sys.path) == False:
     sys.path.append("Z:\Jingyu\Code\Python")
@@ -32,7 +33,8 @@ def mpl_formatting(): # from Dinghao, for plotting editable pdf with matplot
 mpl_formatting() 
 
 def save_fig(fig, OUT_DIR_FIG, fig_name='', save=True,
-             forms=None,):
+             forms=None,
+             dpi=300):
     if forms is None:
         forms = ['png', 'pdf',]
     fig.tight_layout()
@@ -40,7 +42,7 @@ def save_fig(fig, OUT_DIR_FIG, fig_name='', save=True,
         OUT_DIR_FIG = Path(OUT_DIR_FIG)
         for form in forms:
             plt.savefig(OUT_DIR_FIG/f'{fig_name}.{form}',
-                        dpi=300)
+                        dpi=dpi)
     else:
         plt.show()
     plt.close()
@@ -121,7 +123,8 @@ def plot_two_traces_with_binned_stats(profile_a, profile_b,
                                       scalebar_color='k',
                                       scalebar_fs=8,
                                       scalebar_pad_frac=0.05,
-                                      hide_axes_when_scalebar=True
+                                      hide_axes_when_scalebar=True,
+                                      print_median_iqr=False,
                                       ):
     """
     Plot two mean traces with SEM, run stats in time windows, and optionally
@@ -159,9 +162,27 @@ def plot_two_traces_with_binned_stats(profile_a, profile_b,
             "ind_ttest": ttest_ind(profile_a_mean, profile_b_mean, nan_policy='omit'),
             "ranksum": ranksums(profile_a_mean, profile_b_mean),
         }
+
+        # Median + IQR per group
+        a_med = np.nanmedian(profile_a_mean)
+        a_q1, a_q3 = np.nanpercentile(profile_a_mean, [25, 75])
+        b_med = np.nanmedian(profile_b_mean)
+        b_q1, b_q3 = np.nanpercentile(profile_b_mean, [25, 75])
+
+        if print_median_iqr:
+            print(f"[{window[0]}–{window[1]} s] "
+                  f"{labels[0]}: median={a_med:.4f}, IQR=[{a_q1:.4f}, {a_q3:.4f}] (n={np.sum(~np.isnan(profile_a_mean))}) | "
+                  f"{labels[1]}: median={b_med:.4f}, IQR=[{b_q1:.4f}, {b_q3:.4f}] (n={np.sum(~np.isnan(profile_b_mean))})")
+
         # Store results
         results.append({
             "window": f"{window[0]}–{window[1]} s",
+            f"{labels[0]}_median": a_med,
+            f"{labels[0]}_q1": a_q1,
+            f"{labels[0]}_q3": a_q3,
+            f"{labels[1]}_median": b_med,
+            f"{labels[1]}_q1": b_q1,
+            f"{labels[1]}_q3": b_q3,
             **{k + "_stat": v.statistic for k, v in tests.items()},
             **{k + "_pval": v.pvalue for k, v in tests.items()},
         })
@@ -205,10 +226,11 @@ def plot_two_traces_with_binned_stats(profile_a, profile_b,
 
     pvals = df_stats[col].to_numpy()
 
-    # Adjust ylim to make space
+    # Adjust ylim to make space (extra rows below bracket for median/IQR if requested)
     y0, y1 = ax.get_ylim()
     yr = y1 - y0
-    extra = (len(time_windows) + 1) * pad_frac * yr
+    n_extra_rows = 2 if print_median_iqr else 0
+    extra = (len(time_windows) + 1 + n_extra_rows) * pad_frac * yr
     ax.set_ylim(y0, y1 + extra)
     y0, y1 = ax.get_ylim()   # refresh after change
     yr = y1 - y0
@@ -222,6 +244,20 @@ def plot_two_traces_with_binned_stats(profile_a, profile_b,
         xm = 0.5 * (x0_w + x1_w)
         txt = f"p={p:.4f}" if np.isfinite(p) else "n/a"
         ax.text(xm, y, txt, ha='center', va='bottom', fontsize=fs, color=color)
+
+        # Optional median/IQR annotation directly under the bracket
+        if print_median_iqr:
+            row = df_stats.iloc[i]
+            a_txt = (f"{row[f'{labels[0]}_median']:.3f}\n"
+                     f"[{row[f'{labels[0]}_q1']:.3f}, {row[f'{labels[0]}_q3']:.3f}]")
+            b_txt = (f"{row[f'{labels[1]}_median']:.3f}\n"
+                     f"[{row[f'{labels[1]}_q1']:.3f}, {row[f'{labels[1]}_q3']:.3f}]")
+            y_a = y - 1.2 * pad_frac * yr
+            y_b = y_a - 2.4 * pad_frac * yr
+            ax.text(xm, y_a, a_txt, ha='center', va='top',
+                    fontsize=fs - 1, color=colors[0])
+            ax.text(xm, y_b, b_txt, ha='center', va='top',
+                    fontsize=fs - 1, color=colors[1])
         
     ax.text(0.5, y + 0.1 * yr, test, ha='center', va='bottom', fontsize=fs, color=color)
     ax.text(0.5, y + 0.2 * yr, f'baseline={baseline_window}', ha='center', va='bottom', fontsize=fs, color=color)
@@ -301,7 +337,8 @@ def plot_two_traces_with_binned_stats(profile_a, profile_b,
 def plot_bar_with_paired_scatter(
         ax, ctrl_vals, stim_vals, colors=('grey', 'firebrick'),
         title='', ylabel='% cells', xticklabels=('ctrl.', 'stim.'),
-        ylim=None
+        ylim=None,
+        print_median_iqr=False,
     ):
     """Paired bars with lines, auto-ylim, top-anchored stats, and mean±SEM labels."""
 
@@ -394,6 +431,21 @@ def plot_bar_with_paired_scatter(
     for i, (m, e) in enumerate(zip(means, errs)):
         annotate_bar(ax, i, m + e, f"{m:.3f} ± {e:.3f}", bump * 0.8)
 
+    # optional median + IQR annotation below the x-axis (matches bar color)
+    if print_median_iqr:
+        med_c = np.nanmedian(ctrl); q1_c, q3_c = np.nanpercentile(ctrl, [25, 75])
+        med_s = np.nanmedian(stim); q1_s, q3_s = np.nanpercentile(stim, [25, 75])
+        print(f"{xticklabels[0]}: median={med_c:.4f}, IQR=[{q1_c:.4f}, {q3_c:.4f}] (n={len(ctrl)}) | "
+              f"{xticklabels[1]}: median={med_s:.4f}, IQR=[{q1_s:.4f}, {q3_s:.4f}] (n={len(stim)})")
+        trans = ax.get_xaxis_transform()
+        for xi, (med, q1_v, q3_v, c) in enumerate([
+            (med_c, q1_c, q3_c, colors[0]),
+            (med_s, q1_s, q3_s, colors[1]),
+        ]):
+            ax.text(xi, -0.08, f"med={med:.3f}\n[{q1_v:.3f}, {q3_v:.3f}]",
+                    transform=trans, ha='center', va='top',
+                    fontsize=6, color=c, clip_on=False)
+
     # significance labels at the top (fixed offsets from axis top)
     y1 = ylims[1] - 1.0*bump
     y2 = y1       - 1.2*bump
@@ -452,7 +504,8 @@ def plot_bar_with_unpaired_scatter(
         ylim=None,
         jitter=0.08, point_size=8,
         use_welch=True,
-        seed=0
+        seed=0,
+        print_median_iqr=False,
     ):
     """
     Unpaired version with automatic ylim, robust annotation placement,
@@ -539,6 +592,21 @@ def plot_bar_with_unpaired_scatter(
     for i, (m, e) in enumerate(zip(means, errs)):
         text = f"{m:.3f} ± {e:.3f}"
         annotate_bar(ax, i, m + e, text, bump * 0.8)
+
+    # --- optional median + IQR annotation below the x-axis ---
+    if print_median_iqr:
+        med_c = np.nanmedian(ctrl); q1_c, q3_c = np.nanpercentile(ctrl, [25, 75])
+        med_s = np.nanmedian(stim); q1_s, q3_s = np.nanpercentile(stim, [25, 75])
+        print(f"{xticklabels[0]}: median={med_c:.4f}, IQR=[{q1_c:.4f}, {q3_c:.4f}] (n={len(ctrl)}) | "
+              f"{xticklabels[1]}: median={med_s:.4f}, IQR=[{q1_s:.4f}, {q3_s:.4f}] (n={len(stim)})")
+        trans = ax.get_xaxis_transform()
+        for xi, (med, q1_v, q3_v, c) in enumerate([
+            (med_c, q1_c, q3_c, colors[0]),
+            (med_s, q1_s, q3_s, colors[1]),
+        ]):
+            ax.text(xi, -0.08, f"med={med:.3f}\n[{q1_v:.3f}, {q3_v:.3f}]",
+                    transform=trans, ha='center', va='top',
+                    fontsize=6, color=c, clip_on=False)
 
     # --- statistical annotations at top ---
     y_rank = ylims[1] - 1.0*bump
@@ -627,7 +695,7 @@ def plot_mean_trace(data, ax, xaxis=None, color='green', sem_off=False, **kwargs
     sem = np.nanstd(data, axis=0) / np.sqrt(data.shape[0])
     if xaxis is None:
         xaxis = np.arange(mean.shape[0])
-    ax.plot(xaxis, mean, color=color, lw=1,  **kwargs)
+    ax.plot(xaxis, mean, color=color, **kwargs)
     if sem_off==False:
         ax.fill_between(xaxis, mean+sem, mean-sem, 
                        facecolor=color, edgecolor='none', alpha=.3)
@@ -642,7 +710,7 @@ def plot_two_traces_with_scalebars(
     match_centers=True,       # <--- NEW: disable to keep original relative offsets
     sem_alpha=0.25, lw=1.2,
     timebar=1.0, dffbar=0.1,
-    time_label="s", dff_label="dF/F",
+    time_label="s", dff_label="%dF/F",
     bar_side="right",
     bar_pad_frac=(0.05, 0.08),
     bar_y_bump_frac=0.06,     # extra vertical lift for the scalebar (fraction of y-range) when x-axis is shown
@@ -784,7 +852,7 @@ def plot_two_traces_with_scalebars(
     ax.plot([x0 + timebar, x0 + timebar], [y0, y0 + dffbar], color="black", lw=1.2, zorder=5, clip_on=False)
     ax.text(x0 + timebar/2, y0 - 0.02*yspan, f"{timebar:g} {time_label}",
             ha="center", va="top", fontsize=8, clip_on=False)
-    ax.text(x0 + timebar + 0.01*xspan, y0 + dffbar/2, f"{dffbar:g}% {dff_label}",
+    ax.text(x0 + timebar + 0.01*xspan, y0 + dffbar/2, f"{dffbar:g} {dff_label}",
             ha="left", va="center", fontsize=8, rotation=90, clip_on=False)
 
     # title
@@ -1183,7 +1251,8 @@ def plot_paired_violin(list1, list2,
                        fs=10,
                        pos1=0.5, pos2=0.8,
                        width=0.2,
-                       dx=0.02):
+                       dx=0.02,
+                       print_median_iqr=False):
     """
     Two separated half violins:
       - list1: left half at x=pos0
@@ -1308,6 +1377,22 @@ def plot_paired_violin(list1, list2,
     y0 = ax.get_ylim()[0]
     ax.text(pos1, y0, f"n={n_pairs}", ha="center", va="top", fontsize=fs-2)
     ax.text(pos2, y0, f"n={n_pairs}", ha="center", va="top", fontsize=fs-2)
+
+    # optional median + IQR (print + annotate below each violin)
+    if print_median_iqr:
+        med1 = np.nanmedian(list1); q1_1, q3_1 = np.nanpercentile(list1, [25, 75])
+        med2 = np.nanmedian(list2); q1_2, q3_2 = np.nanpercentile(list2, [25, 75])
+        lab1 = colname[0] if isinstance(colname, (list, tuple)) and len(colname) == 2 else 'Cond 1'
+        lab2 = colname[1] if isinstance(colname, (list, tuple)) and len(colname) == 2 else 'Cond 2'
+        print(f"{lab1}: median={med1:.4f}, IQR=[{q1_1:.4f}, {q3_1:.4f}] (n={n_pairs}) | "
+              f"{lab2}: median={med2:.4f}, IQR=[{q1_2:.4f}, {q3_2:.4f}] (n={n_pairs})")
+        trans = ax.get_xaxis_transform()
+        ax.text(pos1, -0.10, f"med={med1:.3f}\n[{q1_1:.3f}, {q3_1:.3f}]",
+                transform=trans, ha='center', va='top',
+                fontsize=fs-3, color=colors[0], clip_on=False)
+        ax.text(pos2, -0.10, f"med={med2:.3f}\n[{q1_2:.3f}, {q3_2:.3f}]",
+                transform=trans, ha='center', va='top',
+                fontsize=fs-3, color=colors[1], clip_on=False)
 
     for spine in ['top', 'right', 'bottom']:
         ax.spines[spine].set_visible(False)
@@ -1460,13 +1545,14 @@ def plot_paired_violin(list1, list2,
 #     if ax is None:
 #         return fig, ax
 
-def plot_unpaired_violin(list1, list2, 
+def plot_unpaired_violin(list1, list2,
                          m_point='mean',
-                         colors=['steelblue', 'orange'], 
-                         colname=None, ylabel=None, ylim=None, 
+                         colors=['steelblue', 'orange'],
+                         colname=None, ylabel=None, ylim=None,
                          title_prefix=None,
                          ax=None,
-                         markersize=3):
+                         markersize=3,
+                         print_median_iqr=False):
     """
     Plot unpaired violin plots comparing two independent 1D lists.
 
@@ -1548,10 +1634,26 @@ def plot_unpaired_violin(list1, list2,
     # Add sample sizes
     ax.text(x1, ax.get_ylim()[0], f'n={len(list1)}', ha='center', va='top', fontsize=8)
     ax.text(x2, ax.get_ylim()[0], f'n={len(list2)}', ha='center', va='top', fontsize=8)
-    
+
+    # optional median + IQR (print + annotate below each violin)
+    if print_median_iqr:
+        med1 = np.nanmedian(list1); q1_1, q3_1 = np.nanpercentile(list1, [25, 75])
+        med2 = np.nanmedian(list2); q1_2, q3_2 = np.nanpercentile(list2, [25, 75])
+        lab1 = colname[0] if isinstance(colname, (list, tuple)) and len(colname) == 2 else 'Group 1'
+        lab2 = colname[1] if isinstance(colname, (list, tuple)) and len(colname) == 2 else 'Group 2'
+        print(f"{lab1}: median={med1:.4f}, IQR=[{q1_1:.4f}, {q3_1:.4f}] (n={len(list1)}) | "
+              f"{lab2}: median={med2:.4f}, IQR=[{q1_2:.4f}, {q3_2:.4f}] (n={len(list2)})")
+        trans = ax.get_xaxis_transform()
+        ax.text(x1, -0.10, f"med={med1:.3f}\n[{q1_1:.3f}, {q3_1:.3f}]",
+                transform=trans, ha='center', va='top',
+                fontsize=7, color=colors[0], clip_on=False)
+        ax.text(x2, -0.10, f"med={med2:.3f}\n[{q1_2:.3f}, {q3_2:.3f}]",
+                transform=trans, ha='center', va='top',
+                fontsize=7, color=colors[1], clip_on=False)
+
     for spine in ['top', 'right', 'bottom']:
         ax.spines[spine].set_visible(False)
-        
+
     # plt.show()
     if return_ax:
         return fig, ax
@@ -1950,10 +2052,10 @@ def plot_overlay_1bar(list1, list2,
         txt_lines = []
 
         # means & SEMs
-        m1_txt = "n/a" if not np.isfinite(mean1) else f"{mean1:.3g}"
-        s1_txt = "n/a" if not np.isfinite(sem1)  else f"{sem1:.3g}"
-        m2_txt = f"{mean2:.3g}"
-        s2_txt = ("n/a" if (se2 is None or not np.isfinite(se2)) else f"{se2:.3g}")
+        m1_txt = "n/a" if not np.isfinite(mean1) else f"{mean1:.4g}"
+        s1_txt = "n/a" if not np.isfinite(sem1)  else f"{sem1:.4g}"
+        m2_txt = f"{mean2:.4g}"
+        s2_txt = ("n/a" if (se2 is None or not np.isfinite(se2)) else f"{se2:.4g}")
 
         txt_lines.append(f"{colname[0]}: mean={m1_txt}, SEM={s1_txt} (n={len(l1)})")
         txt_lines.append(f"{colname[1]}: mean={m2_txt}, SEM={s2_txt} (n={len(l2)})")
@@ -1966,7 +2068,7 @@ def plot_overlay_1bar(list1, list2,
         #     txt_lines.append("ttest_ind: n/a")
         # ranksums (independent rank-sum)
         if stats['ranksums'] is not None:
-            txt_lines.append(f"rank-sum (ranksums): z={stats['ranksums']['z']:.2f}, p={_fmt_p(stats['ranksums']['p'])}")
+            txt_lines.append(f"rank-sum (ranksums): z={stats['ranksums']['z']:.3f}, p={_fmt_p(stats['ranksums']['p'])}")
         else:
             txt_lines.append("rank-sum (ranksums): n/a")
         # # paired t
@@ -2876,7 +2978,121 @@ def plot_random_dff_traces(F_soma, n_show=30, seed=None, q_baseline=10, eps=1e-6
         plt.savefig(out_path_fig, dpi=dpi)
         plt.close()
 
+#%%
+def plot_pyr_sorted_heatmap(df_rec, rec_id, bef, aft, s, 
+                            prefix='', suffix='', show_pyr_lines=True, 
+                            sorted_idx=None,
+                            activity_profile = 'mean_profile',
+                            ratio = 'response_ratio',
+                            cross_sess_norm=False,
+                            norm = True, sm=True, plot_mean=False):
+    if len(suffix)>0:
+        suffix = f'_{suffix}'
+    if len(prefix)>0:
+        prefix = f'{prefix}_'
+            
+    if plot_mean:
+        fig, ax = plt.subplots(figsize=(4, 3), dpi=200)
+    else:
+        fig, ax = plt.subplots(figsize=(3, 3), dpi=200)
+    activity_profile = f'{activity_profile}'
+    
+    # Sort data by run_ratio
+    if sorted_idx is not None:
+       # session_for_sorting = s
+        df_rec['roi_id'] = pd.Categorical(
+            df_rec['roi_id'],
+            categories=sorted_idx,
+            ordered=True
+        )
 
+        df_sorted = df_rec.sort_values('roi_id').reset_index(drop=True)       
+    else:   
+        df_sorted = df_rec.sort_values(by=f'{ratio}', ascending=False)
+    # df_sorted = df_rec.dropna(subset=[f'{ratio}_{session_for_sorting}']).sort_values(by=f'{ratio}_{session_for_sorting}')
+    run_aligned_sorted = np.stack(df_sorted[activity_profile]).squeeze()
+    if sm:
+        run_aligned_sorted_sm = gaussian_filter1d(run_aligned_sorted, sigma=1, axis=-1)
+    else:
+        run_aligned_sorted_sm = run_aligned_sorted
+    if norm:
+        run_aligned_sorted_sm = utl.normalize(run_aligned_sorted_sm)
+    else:
+        run_aligned_sorted_sm = run_aligned_sorted_sm
+    # run_aligned_sorted_sm = robust_std_filter(run_aligned_sorted_sm, robust_sd_factor)
+    tot_roi = run_aligned_sorted.shape[0]
+    
+    # Plot heatmap
+    ax.imshow(run_aligned_sorted_sm, 
+              cmap='Greys', 
+              aspect='auto', 
+              extent=[-bef, aft, 0, tot_roi],
+              interpolation=None)
+    
+    # Add lines to indicate pyrUp and pyrDown boundaries
+    if show_pyr_lines:
+        # Get the sorted indices for pyrUp and pyrDown
+        pyr_up_col = f'pyrUp'
+        pyr_down_col = f'pyrDown'
+        
+        if pyr_up_col in df_sorted.columns and pyr_down_col in df_sorted.columns:
+            # Count pyrUp cells (they should be at the top since sorted by ratio descending)
+            n_pyr_up = df_sorted[pyr_up_col].sum()
+            # Count pyrDown cells (they should be at the bottom)
+            n_pyr_down = df_sorted[pyr_down_col].sum()
+            
+            # Draw horizontal line at the boundary of pyrUp cells
+            if n_pyr_up > 0:
+                ax.axhline(y=tot_roi-n_pyr_up, color='purple', linestyle='-', linewidth=1.5, 
+                          alpha=0.7, label=f'pyrUp boundary (n={n_pyr_up})')
+                print(n_pyr_up)
+            # Draw horizontal line at the boundary of pyrDown cells
+            if n_pyr_down > 0:
+                ax.axhline(y=n_pyr_down, color='darkorange', linestyle='-', 
+                          linewidth=1.5, alpha=0.7, label=f'pyrDown boundary (n={n_pyr_down})')
+                print(n_pyr_down)
+                
+            # Add legend if lines were drawn
+            # if n_pyr_up > 0 or n_pyr_down > 0:
+            #     ax.legend(loc='upper right', fontsize=6, frameon=False)
+    
+    # if plot_mean:
+    #     # pyr_up_col = f'pyrUp_{s}'
+    #     # pyr_down_col = f'pyrDown_{s}'
+        
+    #     pyr_up_col = 'pyrUp_ss1'
+    #     pyr_down_col = 'pyrDown_ss1'
+    #     pyr_up_prof = np.stack(df_sorted.loc[df_sorted[pyr_up_col], 'run_cal_profile_raw_good_ss1'])
+    #     pyr_down_prof = np.stack(df_sorted.loc[df_sorted[pyr_down_col], 'run_cal_profile_raw_good_ss1'])
+        
+    #     tax = ax.twinx()
+    #     xaxis = np.arange((bef+aft)*30)/30-bef
+    #     pf.plot_mean_trace(pyr_up_prof, tax, xaxis, color='purple', label='pyrUp_ss1')
+    #     pf.plot_mean_trace(pyr_down_prof, tax, xaxis, color='darkorange', label='pyrDown_ss2')
+        
+    #     pyr_up_col = 'pyrUp_ss2'
+    #     pyr_down_col = 'pyrDown_ss2'
+    #     pyr_up_prof = np.stack(df_sorted.loc[df_sorted[pyr_up_col], 'run_cal_profile_raw_good_ss2'])
+    #     pyr_down_prof = np.stack(df_sorted.loc[df_sorted[pyr_down_col], 'run_cal_profile_raw_good_ss2'])
+    #     pf.plot_mean_trace(pyr_up_prof, tax, xaxis, color='indigo', label='pyrUp_ss2')
+    #     pf.plot_mean_trace(pyr_down_prof, tax, xaxis, color='chocolate', label='pyrDown_ss2')
+        
+    #     tax.legend(frameon=False, loc=(1.2, .8), prop={'size': 6})
+    #     tax.set(ylabel='raw dFF')
+    
+    # ax.axvline(0, 0, lw=1, ls='--', color='darkred')
+    
+    # ax.set(xlabel='time (s)', 
+    #        ylabel='roi sorted by {}'.format(session_for_sorting), 
+    #        xlim=(-1, 4),
+    #        title='{}{}{}'.format(prefix,
+    #                              rec_id,
+    #                              suffix)
+    #        )
+    fig.tight_layout()
+    return fig, ax
+
+    
 
 
 

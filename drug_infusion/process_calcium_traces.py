@@ -35,6 +35,7 @@ from common.robust_sd_filter import robust_filter_along_axis
 from common.trial_selection import select_good_trials, seperate_valid_trial
 from common.event_response_quantification import quantify_event_response
 
+from drd1_detection import drd1_cell_match
 
 #%%
 def warp_rois_rigid(roi_map, sh, fill=0):
@@ -74,7 +75,7 @@ def roi_map_to_list(roi_map):
 
 #%%
 OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion")
-OUTPUT_RES = OUT_DIR_RAW_DATA / "processed_dataframe_new_good"
+OUTPUT_RES = OUT_DIR_RAW_DATA / "processed_dataframe"
 
 pre_window=(-1, 0)
 post_window=(0.5, 1.5)
@@ -96,6 +97,7 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
     date = rec['date']
     print(f'\n{anm}-{date}')
     data_path = OUT_DIR_RAW_DATA/'raw_signals'/f'{anm}-{date}'
+
     
     if not(data_path/r'soma_class.npz').exists():
         if not(data_path/r'F_corr.npy').exists():
@@ -113,6 +115,7 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
             p_suite2p_ss1 = rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\02\suite2p_func_detec\plane0"
             suite2p_ss1_ops = np.load(p_suite2p_ss1+r'\ops.npy', allow_pickle=True).item()
             mean_img_ch1 = suite2p_ss1_ops['meanImg']
+            # mean_img_ch2 = suite2p_ss1_ops['meanImg_chan2_corrected']
             
             A_master = xr.open_dataarray(data_path/"A_master.nc")
             roi_map = A_master.values.squeeze()
@@ -128,6 +131,7 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
         is_soma, is_active, is_active_soma = generate_masks.select_gcamp_rois(mean_img_ch1, F_corr,
                                          gcamp_stats, 
                                          path_result=r"Z:\Jingyu\LC_HPC_manuscript\raw_data\drug_infusion\TEST_PLOTS")
+        
         np.savez_compressed(
             data_path/r'soma_class.npz',
             is_soma=is_soma,
@@ -137,6 +141,7 @@ for rec_idx, rec in tqdm(rec_drug.iterrows(), total=len(rec_drug), desc="Process
     else:
         is_active_soma = np.load(data_path/r'soma_class.npz')['is_soma']
     
+
     #%% loading behaviour file
     # try:
     p_beh_ss1 = OUT_DIR_RAW_DATA / 'behaviour_profile' / f'{anm}-{date}-02.pkl'

@@ -45,9 +45,20 @@ def send_notification(subject, message, to_email=to_email, from_email=from_email
 
 #%%
 exp = r'dlight_GECO_Ai14_Dbh'
-f_out_df_selected = r"Z:\Jingyu\Code\dlight_imgaing\{}\df_behaviour_info_selected_new.pkl".format(exp)
-df_selected = pd.read_pickle(f_out_df_selected)
-rec_lst = df_selected.index.tolist()
+# f_out_df_selected = r"Z:\Jingyu\Code\dlight_imgaing\{}\df_behaviour_info_selected_new.pkl".format(exp)
+# df_selected = pd.read_pickle(f_out_df_selected)
+# rec_lst = df_selected.index.tolist()
+
+rec_lst = [
+# 'AC327-20260602-02',     
+# 'AC330-20260602-02',
+
+# 'AC327-20260603-02',     
+# 'AC330-20260603-02', 
+
+'AC327-20260604-02',     
+'AC330-20260604-02',        
+    ]
 #%% params and sessions
 # ops = np.load(r"Z:\Jingyu\2P_Recording\AC918\AC918-20231028\04\ROI_detection_test_2.0\suite2p\plane0\ops.npy", allow_pickle=True).item()
 ops = np.load(r"Z:\Jingyu\2P_Recording\suite2p_ops\RegOnly.npy", allow_pickle=True).item()
@@ -109,7 +120,7 @@ for s in rec_lst:
                 
         p_out = p_data + r'\nonrigid_reg_geco'
         
-        if os.path.exists(p_out+r'\suite2p\plane0\stat.npy') == True:
+        if os.path.exists(p_out+r'\suite2p\plane0\stat.npy') == False:
             os.makedirs(p_out, exist_ok=True)
             # ops['path_roi_iterations'] = p_outops['save_path0']
             ops['save_path0'] = p_out

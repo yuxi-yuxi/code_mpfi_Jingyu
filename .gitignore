@@ -81,6 +81,8 @@ venv.bak/
 
 # Folders to ignore
 defunc/
+test/
+tmp_backups/
 common/defunc/
 Rdlight_imaging/
 

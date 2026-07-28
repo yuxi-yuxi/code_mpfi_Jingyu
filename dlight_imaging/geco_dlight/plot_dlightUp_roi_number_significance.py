@@ -15,7 +15,7 @@ pf.mpl_formatting()
 #%% PATHS AND PARAMS
 OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\geco_dlight")
 OUR_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res'
-OUT_DIR_FIG = Path(r"Z:\Jingyu\LC_HPC_manuscript\fig_GECO_dlight")
+OUT_DIR_FIG = Path(r"Z:\Jingyu\LC_HPC_manuscript\fig_GECO_dlight_20260526")
 # OUT_DIR_FIG = Path(r"Z:\Jingyu\2026_sunposium\fig_geco_dlight")
 save_plot = 1    
 
@@ -87,9 +87,9 @@ fig, ax, stats = pf.plot_overlay_1bar([], # no shuffle data
                  jitter=0.03,
                  # ylim=(0, 45),
                  annotation=True)
-ax.annotate(f'num_sig_sessions: {np.sum(session_binom_significant)}/{len(session_binom_significant)}\n(null_chance: {null_chance:.2f})',
-            xy=(0.4, 50), size=8)
-ax.annotate(f'ttest_pval: {pval_ttest:4f} vs\nnull_chance: {null_chance:.2f}',
+ax.annotate(f'num_sig_sessions: {np.sum(session_binom_significant)}/{len(session_binom_significant)}\n(null_chance: {null_chance:.3f})',
+            xy=(0.4, 20), size=8)
+ax.annotate(f'ttest_pval: {pval_ttest:4f} vs\nnull_chance: {null_chance:.3f}',
             xy=(0.4, 40), size=8)
 save_fig(fig, OUT_DIR_FIG, r'dlightUp_grid_number_signicance_ES={}_amp={}.pdf'
             .format(effect_size_thresh, amp_shuff_thresh_up), save=save_plot)

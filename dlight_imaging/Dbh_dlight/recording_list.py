@@ -230,3 +230,6 @@ if os.path.exists(SESSION_INFO_PATH):
     df_session_selected = df_session_selected[~df_session_selected.index.str.startswith('AC966')] 
     
     rec_lst_dlight_dbh = df_session_selected.index.tolist()
+
+#%% learning sessions
+all_recs = [rec for rec in rec_lst if 'AC966' not in rec]

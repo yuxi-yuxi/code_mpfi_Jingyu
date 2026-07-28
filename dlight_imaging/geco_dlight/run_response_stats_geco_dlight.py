@@ -18,7 +18,8 @@ from common.trial_selection import seperate_valid_trial
 from common.utils_imaging import percentile_dff
 from common.event_response_quantification import quantify_event_response
 #%%
-OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\geco_dlight")
+# OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\LC_HPC_manuscript\raw_data\geco_dlight")
+OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\dlight_learning\geco_dlight")
 OUT_DIR_REGRESS = OUT_DIR_RAW_DATA / 'regression_res'
 OUT_DIR = OUT_DIR_RAW_DATA / 'processed_dataframe'
 OUT_DIR_FIG = ''
@@ -33,8 +34,32 @@ regression_name = 'single_trial_regression_anat_roi'
 # rec_lst = df_selected.index.tolist()
 
 # Load recording list
-from dlight_imaging.geco_dlight.recording_list import rec_lst_dlight_geco as rec_lst
+# from dlight_imaging.geco_dlight.recording_list import rec_lst_dlight_geco as rec_lst
+rec_lst = [
+'AC327-20260602-02',     
+'AC327-20260603-02',     
+'AC327-20260604-02',     
+'AC327-20260605-02',     
+'AC327-20260606-02',     
+'AC327-20260607-02',     
+'AC327-20260608-02',     
+'AC327-20260609-02',     
+'AC327-20260610-02',     
+'AC327-20260611-02',
+'AC327-20260612-02', 
 
+'AC330-20260602-02',
+'AC330-20260603-02', 
+'AC330-20260604-02', 
+'AC330-20260605-02', 
+'AC330-20260606-02', 
+'AC330-20260607-02', 
+'AC330-20260608-02',
+'AC330-20260609-02', 
+'AC330-20260610-02',          
+'AC330-20260611-02',          
+'AC330-20260612-02',  
+    ]
 dlight_pre  = (-1, 0)
 dlight_post = (0, 1)
 geco_pre  = (-1, 0)
@@ -58,17 +83,17 @@ for rec in tqdm(rec_lst):
     regress_traces = np.load(p_regression / f'{regression_name}_res_traces.npz')
     corrected_dlight = regress_traces['corrected_dlight']
     # loading dFF traces
-    if not (p_regression / 'dff_corrected_dlight.npy').exists():
+    if not (p_regression / 'dff_corrected_dlight_new.npy').exists():
         print('calculating dlight dFF trace...') 
         dff_dlight, baseline_dlight = percentile_dff(corrected_dlight, q=20, return_baseline=True)
-        # np.save(p_regression / 'dff_corrected_dlight.npy', dff_dlight)
+        np.save(p_regression / 'dff_corrected_dlight.npy', dff_dlight)
         np.save(p_regression / 'baseline_corrected_dlight.npy', baseline_dlight)
     else:
         print('loading dlight dFF trace...') 
         dff_dlight = np.load(p_regression / 'dff_corrected_dlight.npy')
         
         
-    if not (p_regression / 'dff_geco_.npy').exists():
+    if not (p_regression / 'dff_geco_new.npy').exists():
         print('calculating geco dFF trace...') 
         anm, date, ss = rec.split('-')
         p_suite2p_geco = Path(rf"Z:\Jingyu\2P_Recording\{anm}\{anm}-{date}\{ss}\nonrigid_reg_geco\suite2p_anat_detec\plane0")
@@ -77,11 +102,11 @@ for rec in tqdm(rec_lst):
         # correct calcium trace with neuropil signal
         geco_trace_corr = geco_trace - 0.7*geco_trace_neu
         dff_geco, baseline_geco = percentile_dff(geco_trace_corr, q=20, return_baseline=True) 
-        # np.save(p_regression / 'dff_geco_.npy', dff_geco)
-        np.save(p_regression / 'baseline_geco_.npy', baseline_geco)
+        np.save(p_regression / 'dff_geco.npy', dff_geco)
+        np.save(p_regression / 'baseline_geco.npy', baseline_geco)
     else:
         print('loading soam geco dFF trace...')
-        dff_geco_soma = np.load(p_regression / 'dff_geco_.npy')
+        dff_geco_soma = np.load(p_regression / 'dff_geco.npy')
     
     #%%
     # thresh_dlight = np.nanmean(dff_dlight) + 5*np.nanstd(dff_dlight)

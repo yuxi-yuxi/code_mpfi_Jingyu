@@ -200,6 +200,7 @@ rec_lst = [
 
 ]
 
+all_recs = [i for i in rec_lst if 'AC991' not in i]
 #%% processed sessions metadata
 SESSION_INFO_PATH = r"Z:\Jingyu\LC_HPC_manuscript\raw_data\geco_dlight\geco_dlight_session_info.parquet"
 if os.path.exists(SESSION_INFO_PATH):

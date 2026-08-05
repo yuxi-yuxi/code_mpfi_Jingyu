@@ -138,8 +138,8 @@ def process_F_trace(
         print("  Detecting shutter off frames...")
         F_raw = np.load(data_base/r"F.npy")
         F_roi_mean = np.nanmean(F_raw, axis=0)
-        shutter_masks = F_roi_mean < 1
-        # shutter_masks = F_roi_mean < find_frame_cutoff(F_roi_mean)
+        # shutter_masks = F_roi_mean < 1
+        shutter_masks = F_roi_mean < find_frame_cutoff(F_roi_mean)
         kept_frames = ~shutter_masks
         np.save(save_path / "shutter_mask.npy", shutter_masks)
     else:
@@ -230,9 +230,10 @@ def process_F_trace(
 if __name__ == "__main__":
     
     rec_lst = [
-    'AC333-20260726-02',
-    'AC333-20260726-04',
-    'AC334-20260726-02'
+            'AC335-20260803-02',
+            # 'AC334-20260729-04',
+            'AC336-20260803-02',
+            'AC336-20260803-04',
         ]
     
     for rec in rec_lst:

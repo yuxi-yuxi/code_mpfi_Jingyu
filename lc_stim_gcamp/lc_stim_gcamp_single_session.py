@@ -34,7 +34,7 @@ def align_pulses(df_beh, max_pulse_delay=1000):
     ----------
     df_beh : dict-like
         Must expose 'pulse_start_times', 'pulse_end_times', 'run_onsets',
-        and 'frame_times'.
+        'frame_times', and one 'pulse_descriptions' entry per trial.
     max_pulse_delay : float
         Threshold on |first_pul_start - run_onset|. Trials exceeding this AND
         the neighbor they likely stole a pulse from are marked invalid. Same
@@ -45,6 +45,7 @@ def align_pulses(df_beh, max_pulse_delay=1000):
     dict with:
         paired_starts, paired_ends : arrays of matched pulse start/end times
         pulse_trains               : list length n_trials of [(s,e), ...]
+        pulse_descriptions         : list length n_trials, copied from df_beh
         frames_per_trial           : list length n_trials of frame-index arrays
         trials_with_stim           : bool mask, True where pulse_trains[i] non-empty
         onset_to_first_pulse       : float array, first pul_start - run_onset (NaN if no stim)
@@ -76,6 +77,16 @@ def align_pulses(df_beh, max_pulse_delay=1000):
         [np.nan if t is None else t for t in run_onset_times], dtype=float
     )
     n_trials = len(onsets)
+
+    # Pulse descriptions are already recorded in behavioral-trial order. Keep
+    # them in that same trial space rather than trying to pair them with each
+    # pulse edge (a stimulation train contains many pulse edges).
+    pulse_descriptions = list(df_beh['pulse_descriptions'])
+    # if len(pulse_descriptions) != n_trials:
+    #     raise ValueError(
+    #         "'pulse_descriptions' must contain one entry per run_onset "
+    #         f"({len(pulse_descriptions)} descriptions for {n_trials} trials)"
+    #     )
 
     valid_mask = ~np.isnan(onsets)
     valid_trial_idx = np.where(valid_mask)[0]
@@ -180,10 +191,10 @@ def align_pulses(df_beh, max_pulse_delay=1000):
     # landing early (negative delay) likely belongs to trial i-1. Mark the
     # bad trial AND the neighbor it stole from.
     valid_trials = np.ones(n_trials, dtype=bool)
-    bad = np.where(np.abs(onset_to_first_pulse) > max_pulse_delay)[0]
-    # bad = np.where((onset_to_first_pulse < 0) | 
-    #                (onset_to_first_pulse > max_pulse_delay)
-    #                 )[0]
+    # bad = np.where(np.abs(onset_to_first_pulse) > max_pulse_delay)[0]
+    bad = np.where((onset_to_first_pulse < 0) | 
+                   (onset_to_first_pulse > max_pulse_delay)
+                    )[0]
     for i in bad:
         valid_trials[i] = False
         if onset_to_first_pulse[i] > 0 and i + 1 < n_trials:
@@ -195,6 +206,7 @@ def align_pulses(df_beh, max_pulse_delay=1000):
         'paired_starts': paired_starts,
         'paired_ends': paired_ends,
         'pulse_trains': pulse_trains,
+        'pulse_descriptions': pulse_descriptions,
         'frames_per_trial': frames_per_trial,
         'stim_covered_frames': stim_covered_frames,
         'train_covered_frames': train_covered_frames,
@@ -263,7 +275,9 @@ def classify_pyrs(df_stats,
 # 'AC322-20260506-02'
 # 'AC322-20260506-04' # issue session
 # 'AC322-20260507-02'
-rec = 'AC333-20260726-04'
+# 'AC334-20260728-02',
+# 'AC334-20260728-04',
+rec = 'AC336-20260803-04'
 
 anm, date, ss = rec.split('-')
 df_beh = pd.read_pickle(rf"Z:\Jingyu\raw_data\lc_stim_gcamp\processed_data\{rec}\{rec}.pkl")
@@ -285,7 +299,13 @@ dff_sd[:, kept_frames] = dff_sd_kept
 dff = dff_sd
 
 # pulse alignment
-df_pulse = align_pulses(df_beh, max_pulse_delay=8000)
+pulse_method = [trial_stat[15] for trial_stat in df_beh['trial_statements']]
+pulse_method = max(pulse_method)
+if pulse_method == '2': # run-onset pulse
+    df_pulse = align_pulses(df_beh, max_pulse_delay=500)
+elif pulse_method == '7': # pulse after 1500 ms post run onset
+    df_pulse = align_pulses(df_beh, max_pulse_delay=2000)
+    
 stim_covered_frames = df_pulse['stim_covered_frames']
 train_covered_frames = df_pulse['train_covered_frames']
 
@@ -305,7 +325,7 @@ stim_plus_one_trials = np.zeros_like(stim_valid_trials)
 stim_plus_one_trials[1:] = stim_valid_trials[:-1]
 stim_plus_two_trials = np.zeros_like(stim_valid_trials)
 stim_plus_two_trials[2:] = stim_valid_trials[:-2]
-beh_valid_trials = seperate_valid_trial(df_beh, time_thresh=8000)
+beh_valid_trials = seperate_valid_trial(df_beh, time_thresh=10000)
 run_onset_frames = np.array(df_beh['run_onset_frames'])
 block_num = np.array(df_beh['block_numbers'])
 
@@ -318,7 +338,7 @@ baseline_window=(-1, 0)
 response_window=(1, 1.5) # seconds
 profile_max_thresh=3
 profile_min_thresh=0.1
-pyrUp_thresh = 2.5
+pyrUp_thresh = 1.5
 pyrDown_thresh = 1/pyrUp_thresh
 
 # ctrl

@@ -184,8 +184,8 @@ OUT_DIR_RAW_DATA = Path(r"Z:\Jingyu\raw_data\lc_stim_sensor\processed_data")
 
 rec_lst = [
 
-'AD191-20260713-02',
-'AD192-20260714-02',
+'AD192-20260729-02',
+'AD193-20260730-02',
     ]
 
 # from Rdlight_imaging.rec_lst import all_rec

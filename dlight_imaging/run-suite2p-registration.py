@@ -80,8 +80,12 @@ all_rec = [
 # 'AC326-20260530-02',
 # 'AC326-20260531-02',  
 
-'AD191-20260713-02',  
-'AD192-20260714-02',       
+# 'AD191-20260713-02',  
+# 'AD192-20260714-02',  
+# 'AD192-20260729-02',
+# 'AD192-20260729-04',   
+'AD193-20260730-02',
+'AD193-20260730-04',    
     ]
 #%% params and sessions
 # ops = np.load(r"Z:\Jingyu\2P_Recording\AC918\AC918-20231028\04\ROI_detection_test_2.0\suite2p\plane0\ops.npy", allow_pickle=True).item()
